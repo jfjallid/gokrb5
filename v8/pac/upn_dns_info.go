@@ -3,8 +3,8 @@ package pac
 import (
 	"bytes"
 
-	"github.com/jcmturner/rpc/v2/mstypes"
-)
+	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
+)               
 
 // UPNDNSInfo implements https://msdn.microsoft.com/en-us/library/dd240468.aspx
 type UPNDNSInfo struct {

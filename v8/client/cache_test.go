@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jcmturner/gokrb5/v8/messages"
-	"github.com/jcmturner/gokrb5/v8/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/messages"
+	"github.com/jfjallid/gokrb5/v8/types"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 func TestCache_addEntry_getEntry_remove_clear(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 const (

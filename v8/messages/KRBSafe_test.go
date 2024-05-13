@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jcmturner/gokrb5/v8/iana"
-	"github.com/jcmturner/gokrb5/v8/iana/addrtype"
-	"github.com/jcmturner/gokrb5/v8/iana/msgtype"
-	"github.com/jcmturner/gokrb5/v8/test/testdata"
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/iana"
+	"github.com/jfjallid/gokrb5/v8/iana/addrtype"
+	"github.com/jfjallid/gokrb5/v8/iana/msgtype"
+	"github.com/jfjallid/gokrb5/v8/test/testdata"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 func TestUnmarshalKRBSafe(t *testing.T) {

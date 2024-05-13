@@ -1,13 +1,13 @@
 # gokrb5
 
-It is recommended to use the latest version: [![Version](https://img.shields.io/github/release/jcmturner/gokrb5.svg)](https://github.com/jcmturner/gokrb5/releases)
+It is recommended to use the latest version: [![Version](https://img.shields.io/github/release/jcmturner/gokrb5.svg)](https://github.com/jfjallid/gokrb5/releases)
 
 Development will be focused on the latest major version. New features will only be targeted at this version.
 
 | Versions | Dependency Management | Import Path | Usage | Godoc | Go Report Card |
 |----------|-----------------------|-------------|-------|-------|----------------|
-| [![v8](https://github.com/jcmturner/gokrb5/workflows/v8/badge.svg)](https://github.com/jcmturner/gokrb5/actions?query=workflow%3Av8) | Go modules | import "github.com/jcmturner/gokrb5/v8/{sub-package}" | [![Usage](https://img.shields.io/badge/v8-usage-blue)](https://github.com/jcmturner/gokrb5/blob/master/v8/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jcmturner/gokrb5/v8) | [![Go Report Card](https://goreportcard.com/badge/github.com/jcmturner/gokrb5/v8)](https://goreportcard.com/report/github.com/jcmturner/gokrb5/v8) |
-| [![v7](https://github.com/jcmturner/gokrb5/workflows/v7/badge.svg)](https://github.com/jcmturner/gokrb5/actions?query=workflow%3Av7) | gopkg.in | import "gopkg.in/jcmturner/gokrb5.v7/{sub-package}" | [![Usage](https://img.shields.io/badge/v7-usage-blue)](https://github.com/jcmturner/gokrb5/blob/master/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jcmturner/gokrb5@v7.5.0+incompatible) | [![Go Report Card](https://goreportcard.com/badge/gopkg.in/jcmturner/gokrb5.v7)](https://goreportcard.com/report/gopkg.in/jcmturner/gokrb5.v7) |
+| [![v8](https://github.com/jfjallid/gokrb5/workflows/v8/badge.svg)](https://github.com/jfjallid/gokrb5/actions?query=workflow%3Av8) | Go modules | import "github.com/jfjallid/gokrb5/v8/{sub-package}" | [![Usage](https://img.shields.io/badge/v8-usage-blue)](https://github.com/jfjallid/gokrb5/blob/master/v8/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jfjallid/gokrb5/v8) | [![Go Report Card](https://goreportcard.com/badge/github.com/jfjallid/gokrb5/v8)](https://goreportcard.com/report/github.com/jfjallid/gokrb5/v8) |
+| [![v7](https://github.com/jfjallid/gokrb5/workflows/v7/badge.svg)](https://github.com/jfjallid/gokrb5/actions?query=workflow%3Av7) | gopkg.in | import "gopkg.in/jcmturner/gokrb5.v7/{sub-package}" | [![Usage](https://img.shields.io/badge/v7-usage-blue)](https://github.com/jfjallid/gokrb5/blob/master/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jfjallid/gokrb5@v7.5.0+incompatible) | [![Go Report Card](https://goreportcard.com/badge/gopkg.in/jcmturner/gokrb5.v7)](https://goreportcard.com/report/gopkg.in/jcmturner/gokrb5.v7) |
 
 
 #### Go Version Support
@@ -52,7 +52,7 @@ The following is working/tested:
 * Microsoft PAC Authorization Data is processed and exposed in the HTTP request context. Available if Microsoft Active Directory is used as the KDC.
 
 ## Contributing
-If you are interested in contributing to gokrb5, great! Please read the [contribution guidelines](https://github.com/jcmturner/gokrb5/blob/master/CONTRIBUTING.md).
+If you are interested in contributing to gokrb5, great! Please read the [contribution guidelines](https://github.com/jfjallid/gokrb5/blob/master/CONTRIBUTING.md).
 
 ---
 
@@ -83,13 +83,13 @@ If you are interested in contributing to gokrb5, great! Please read the [contrib
 
 ## Contributing
 Thank you for your interest in contributing to gokrb5 please read the 
-[contribution guide](https://github.com/jcmturner/gokrb5/blob/master/CONTRIBUTING.md) as it should help you get started.
+[contribution guide](https://github.com/jfjallid/gokrb5/blob/master/CONTRIBUTING.md) as it should help you get started.
 
 ## Known Issues
 | Issue | Worked around? | References |
 |-------|-------------|------------|
 | The Go standard library's encoding/asn1 package cannot unmarshal into slice of asn1.RawValue | Yes | https://github.com/golang/go/issues/17321 |
-| The Go standard library's encoding/asn1 package cannot marshal into a GeneralString | Yes - using https://github.com/jcmturner/gofork/tree/master/encoding/asn1 | https://github.com/golang/go/issues/18832 |
-| The Go standard library's encoding/asn1 package cannot marshal into slice of strings and pass stringtype parameter tags to members | Yes - using https://github.com/jcmturner/gofork/tree/master/encoding/asn1 | https://github.com/golang/go/issues/18834 |
+| The Go standard library's encoding/asn1 package cannot marshal into a GeneralString | Yes - using https://github.com/jfjallid/gofork/tree/master/encoding/asn1 | https://github.com/golang/go/issues/18832 |
+| The Go standard library's encoding/asn1 package cannot marshal into slice of strings and pass stringtype parameter tags to members | Yes - using https://github.com/jfjallid/gofork/tree/master/encoding/asn1 | https://github.com/golang/go/issues/18834 |
 | The Go standard library's encoding/asn1 package cannot marshal with application tags | Yes | |
-| The Go standard library's x/crypto/pbkdf2.Key function uses the int type for iteraction count limiting meaning the 4294967296 count specified in https://tools.ietf.org/html/rfc3962 section 4 cannot be met on 32bit systems | Yes - using https://github.com/jcmturner/gofork/tree/master/x/crypto/pbkdf2 | https://go-review.googlesource.com/c/crypto/+/85535 |
+| The Go standard library's x/crypto/pbkdf2.Key function uses the int type for iteraction count limiting meaning the 4294967296 count specified in https://tools.ietf.org/html/rfc3962 section 4 cannot be met on 32bit systems | Yes - using https://github.com/jfjallid/gofork/tree/master/x/crypto/pbkdf2 | https://go-review.googlesource.com/c/crypto/+/85535 |

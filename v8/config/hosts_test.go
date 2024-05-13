@@ -1,18 +1,18 @@
 package config
 
 import (
-	"github.com/jcmturner/gokrb5/v8/test"
+	"github.com/jfjallid/gokrb5/v8/test"
 	"testing"
 
-	"github.com/jcmturner/gokrb5/v8/test/testdata"
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/test/testdata"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 func TestConfig_GetKDCsUsesConfiguredKDC(t *testing.T) {
 	t.Parallel()
 
 	// This test is meant to cover the fix for
-	// https://github.com/jcmturner/gokrb5/issues/332
+	// https://github.com/jfjallid/gokrb5/issues/332
 	krb5ConfWithKDCAndDNSLookupKDC := `
 [libdefaults]
  dns_lookup_kdc = true

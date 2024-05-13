@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jcmturner/gokrb5/v8/iana/etypeID"
-	"github.com/jcmturner/gokrb5/v8/iana/nametype"
-	"github.com/jcmturner/gokrb5/v8/test/testdata"
-	"github.com/jcmturner/gokrb5/v8/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/iana/etypeID"
+	"github.com/jfjallid/gokrb5/v8/iana/nametype"
+	"github.com/jfjallid/gokrb5/v8/test/testdata"
+	"github.com/jfjallid/gokrb5/v8/types"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 func TestUnmarshal(t *testing.T) {

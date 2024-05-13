@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 func TestErrorf(t *testing.T) {

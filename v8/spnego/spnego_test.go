@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/jcmturner/gofork/encoding/asn1"
-	"github.com/stretchr/testify/assert"
+	"github.com/jfjallid/gofork/encoding/asn1"
+	"github.com/jfjallid/gokrb5/v8/imported/testify/assert"
 )
 
 const (

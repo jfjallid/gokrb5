@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jcmturner/gokrb5/v8/messages"
-	"github.com/jcmturner/gokrb5/v8/types"
+	"github.com/jfjallid/gokrb5/v8/messages"
+	"github.com/jfjallid/gokrb5/v8/types"
 )
 
 // Cache for service tickets held by the client.
@@ -79,6 +79,12 @@ func (c *Cache) addEntry(tkt messages.Ticket, authTime, startTime, endTime, rene
 	}
 	return c.Entries[spn]
 }
+
+// Might be useful if I want to add functionality to inject a TGS into the cache
+//func (c *Cache) AddEntry(tkt messages.Ticket, authTime, startTime, endTime, renewTill time.Time, sessionKey types.EncryptionKey) {
+//    c.addEntry(tkt, authTime, startTime, endTime, renewTill, sessionKey)
+//    return
+//}
 
 // clear deletes all the cache entries
 func (c *Cache) clear() {
