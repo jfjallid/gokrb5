@@ -7,18 +7,18 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jcmturner/gofork/encoding/asn1"
-	"github.com/jcmturner/gokrb5/v8/asn1tools"
-	"github.com/jcmturner/gokrb5/v8/config"
-	"github.com/jcmturner/gokrb5/v8/credentials"
-	"github.com/jcmturner/gokrb5/v8/crypto"
-	"github.com/jcmturner/gokrb5/v8/iana/asnAppTag"
-	"github.com/jcmturner/gokrb5/v8/iana/flags"
-	"github.com/jcmturner/gokrb5/v8/iana/keyusage"
-	"github.com/jcmturner/gokrb5/v8/iana/msgtype"
-	"github.com/jcmturner/gokrb5/v8/iana/patype"
-	"github.com/jcmturner/gokrb5/v8/krberror"
-	"github.com/jcmturner/gokrb5/v8/types"
+	"github.com/jfjallid/gofork/encoding/asn1"
+	"github.com/jfjallid/gokrb5/v8/asn1tools"
+	"github.com/jfjallid/gokrb5/v8/config"
+	"github.com/jfjallid/gokrb5/v8/credentials"
+	"github.com/jfjallid/gokrb5/v8/crypto"
+	"github.com/jfjallid/gokrb5/v8/iana/asnAppTag"
+	"github.com/jfjallid/gokrb5/v8/iana/flags"
+	"github.com/jfjallid/gokrb5/v8/iana/keyusage"
+	"github.com/jfjallid/gokrb5/v8/iana/msgtype"
+	"github.com/jfjallid/gokrb5/v8/iana/patype"
+	"github.com/jfjallid/gokrb5/v8/krberror"
+	"github.com/jfjallid/gokrb5/v8/types"
 )
 
 type marshalKDCRep struct {
@@ -228,7 +228,19 @@ func (k *ASRep) DecryptEncPart(c *credentials.Credentials) (types.EncryptionKey,
 			return key, krberror.Errorf(err, krberror.DecryptingError, "error decrypting AS_REP encrypted part")
 		}
 	}
-	if !c.HasKeytab() && !c.HasPassword() {
+	if c.HasNTHash() {
+		key, _, err = crypto.GetKeyFromHash(c.NTHash(), k.CName, k.CRealm, k.EncPart.EType, k.PAData)
+		if err != nil {
+			return key, krberror.Errorf(err, krberror.DecryptingError, "error decrypting AS_REP encrypted part")
+		}
+	}
+	if c.HasAESKey() {
+		key, _, err = crypto.GetKeyFromHash(c.AESKey(), k.CName, k.CRealm, k.EncPart.EType, k.PAData)
+		if err != nil {
+			return key, krberror.Errorf(err, krberror.DecryptingError, "error decrypting AS_REP encrypted part")
+		}
+	}
+	if !c.HasKeytab() && !c.HasPassword() && !c.HasNTHash() && !c.HasAESKey() {
 		return key, krberror.NewErrorf(krberror.DecryptingError, "no secret available in credentials to perform decryption of AS_REP encrypted part")
 	}
 	b, err := crypto.DecryptEncPart(k.EncPart, key, keyusage.AS_REP_ENCPART)

@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jcmturner/gofork/encoding/asn1"
-	"github.com/jcmturner/gokrb5/v8/crypto"
-	"github.com/jcmturner/gokrb5/v8/iana/asnAppTag"
-	"github.com/jcmturner/gokrb5/v8/iana/keyusage"
-	"github.com/jcmturner/gokrb5/v8/iana/msgtype"
-	"github.com/jcmturner/gokrb5/v8/krberror"
-	"github.com/jcmturner/gokrb5/v8/types"
+	"github.com/jfjallid/gofork/encoding/asn1"
+	"github.com/jfjallid/gokrb5/v8/crypto"
+	"github.com/jfjallid/gokrb5/v8/iana/asnAppTag"
+	"github.com/jfjallid/gokrb5/v8/iana/keyusage"
+	"github.com/jfjallid/gokrb5/v8/iana/msgtype"
+	"github.com/jfjallid/gokrb5/v8/krberror"
+	"github.com/jfjallid/gokrb5/v8/types"
 )
 
 type marshalKRBCred struct {

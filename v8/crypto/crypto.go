@@ -5,11 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/jcmturner/gokrb5/v8/crypto/etype"
-	"github.com/jcmturner/gokrb5/v8/iana/chksumtype"
-	"github.com/jcmturner/gokrb5/v8/iana/etypeID"
-	"github.com/jcmturner/gokrb5/v8/iana/patype"
-	"github.com/jcmturner/gokrb5/v8/types"
+	"github.com/jfjallid/gokrb5/v8/crypto/etype"
+	"github.com/jfjallid/gokrb5/v8/iana/chksumtype"
+	"github.com/jfjallid/gokrb5/v8/iana/etypeID"
+	"github.com/jfjallid/gokrb5/v8/iana/patype"
+	"github.com/jfjallid/gokrb5/v8/types"
 )
 
 // GetEtype returns an instances of the required etype struct for the etype ID.
@@ -26,9 +26,6 @@ func GetEtype(id int32) (etype.EType, error) {
 		return et, nil
 	case etypeID.AES256_CTS_HMAC_SHA384_192:
 		var et Aes256CtsHmacSha384192
-		return et, nil
-	case etypeID.DES3_CBC_SHA1_KD:
-		var et Des3CbcSha1Kd
 		return et, nil
 	case etypeID.RC4_HMAC:
 		var et RC4HMAC
@@ -53,9 +50,6 @@ func GetChksumEtype(id int32) (etype.EType, error) {
 	case chksumtype.HMAC_SHA384_192_AES256:
 		var et Aes256CtsHmacSha384192
 		return et, nil
-	case chksumtype.HMAC_SHA1_DES3_KD:
-		var et Des3CbcSha1Kd
-		return et, nil
 	case chksumtype.KERB_CHECKSUM_HMAC_MD5:
 		var et RC4HMAC
 		return et, nil
@@ -68,9 +62,9 @@ func GetChksumEtype(id int32) (etype.EType, error) {
 }
 
 // GetKeyFromPassword generates an encryption key from the principal's password.
-func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, etypeID int32, pas types.PADataSequence) (types.EncryptionKey, etype.EType, error) {
+func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, etID int32, pas types.PADataSequence) (types.EncryptionKey, etype.EType, error) {
 	var key types.EncryptionKey
-	et, err := GetEtype(etypeID)
+	et, err := GetEtype(etID)
 	if err != nil {
 		return key, et, fmt.Errorf("error getting encryption type: %v", err)
 	}
@@ -93,7 +87,7 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 			if err != nil {
 				return key, et, fmt.Errorf("error unmashaling PA Data to PA-ETYPE-INFO2: %v", err)
 			}
-			if etypeID != eti[0].EType {
+			if etID != eti[0].EType {
 				et, err = GetEtype(eti[0].EType)
 				if err != nil {
 					return key, et, fmt.Errorf("error getting encryption type: %v", err)
@@ -109,7 +103,7 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 			if err != nil {
 				return key, et, fmt.Errorf("error unmashalling PA Data to PA-ETYPE-INFO2: %v", err)
 			}
-			if etypeID != et2[0].EType {
+			if etID != et2[0].EType {
 				et, err = GetEtype(et2[0].EType)
 				if err != nil {
 					return key, et, fmt.Errorf("error getting encryption type: %v", err)
@@ -129,9 +123,25 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 		return key, et, fmt.Errorf("error deriving key from string: %+v", err)
 	}
 	key = types.EncryptionKey{
-		KeyType:  etypeID,
+		KeyType:  etID,
 		KeyValue: k,
 	}
+	return key, et, nil
+}
+
+// GetKeyFromHash generates an encryption key from the principal's password hash
+func GetKeyFromHash(hash []byte, cname types.PrincipalName, realm string, etID int32, pas types.PADataSequence) (types.EncryptionKey, etype.EType, error) {
+	var key types.EncryptionKey
+	et, err := GetEtype(etID)
+	if err != nil {
+		return key, et, fmt.Errorf("error getting encryption type: %v", err)
+	}
+
+	key = types.EncryptionKey{
+		KeyType:  etID,
+		KeyValue: hash,
+	}
+
 	return key, et, nil
 }
 
