@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jfjallid/gofork/encoding/asn1"
+	"github.com/jfjallid/gokrb5/v8/asn1tools"
 	"github.com/jfjallid/gokrb5/v8/crypto"
 	"github.com/jfjallid/gokrb5/v8/iana/asnAppTag"
 	"github.com/jfjallid/gokrb5/v8/iana/keyusage"
@@ -49,9 +50,38 @@ type KrbCredInfo struct {
 	StartTime time.Time           `asn1:"generalized,optional,explicit,tag:5"`
 	EndTime   time.Time           `asn1:"generalized,optional,explicit,tag:6"`
 	RenewTill time.Time           `asn1:"generalized,optional,explicit,tag:7"`
-	SRealm    string              `asn1:"optional,explicit,ia5,tag:8"`
-	SName     types.PrincipalName `asn1:"optional,explicit,tag:9"`
-	CAddr     types.HostAddresses `asn1:"optional,explicit,tag:10"`
+	SRealm    string              `asn1:"generalstring,optional,explicit,tag:8"`
+	SName types.PrincipalName `asn1:"optional,explicit,tag:9"`
+	CAddr types.HostAddresses `asn1:"optional,explicit,tag:10"`
+}
+
+// Marshal the KRBCred struct into bytes b
+func (k *KRBCred) Marshal() (b []byte, err error) {
+	m := marshalKRBCred{
+		PVNO:    k.PVNO,
+		MsgType: k.MsgType,
+	}
+	if len(k.EncPart.Cipher) == 0 {
+		var cipher []byte
+		cipher, err = k.DecryptedEncPart.Marshal()
+		if err != nil {
+			return
+		}
+		m.EncPart.EType = 0
+		m.EncPart.Cipher = make([]byte, len(cipher))
+		copy(m.EncPart.Cipher, cipher)
+	}
+	m.Tickets, err = MarshalTicketSequence(k.Tickets)
+	if err != nil {
+		return
+	}
+	m.Tickets.Tag = 2
+	b, err = asn1.Marshal(m)
+	if err != nil {
+		return
+	}
+	b = asn1tools.AddASNAppTag(b, asnAppTag.KRBCred)
+	return
 }
 
 // Unmarshal bytes b into the KRBCred struct.
@@ -99,4 +129,13 @@ func (k *EncKrbCredPart) Unmarshal(b []byte) error {
 		return krberror.Errorf(err, krberror.EncodingError, "error unmarshaling EncKrbCredPart")
 	}
 	return nil
+}
+
+func (k *EncKrbCredPart) Marshal() (b []byte, err error) {
+	b, err = asn1.Marshal(*k)
+	if err != nil {
+		return
+	}
+	b = asn1tools.AddASNAppTag(b, asnAppTag.EncKrbCredPart)
+	return
 }

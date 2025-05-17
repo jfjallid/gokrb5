@@ -107,7 +107,8 @@ func NewWithKeytab(username, realm string, kt *keytab.Keytab, krb5conf *config.C
 // WARNING: A client created from CCache does not automatically renew TGTs and a failure will occur after the TGT expires.
 func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	var err error
-	var foundTGS, foundTGT bool
+	var foundST, foundTGT, foundReferralTGT, foundOtherReferralTicket bool
+	var krbReferralSpn types.PrincipalName
 	cl := &Client{
 		Credentials: c.GetClientCredentials(),
 		Config:      krb5conf,
@@ -117,20 +118,96 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		},
 		cache: NewCache(),
 	}
+	// Check if we are targeting a referral ticket, and if it already exists in the ccache.
+	if target != nil {
+		if strings.EqualFold(target[0], "krbtgt") {
+			if !strings.EqualFold(c.DefaultPrincipal.Realm, target[1]) {
+				// Target realm is not same as client realm so we need a referral ticket
+				krbReferralSpn = types.PrincipalName{
+					NameType:   nametype.KRB_NT_SRV_INST,
+					NameString: []string{"krbtgt", strings.ToUpper(target[1])},
+				}
+			}
+		} else {
+			parts := strings.SplitN(target[1], ".", 2)
+			// When we are targeting a cross-realm SPN, check if we already have a referral ticket
+			if !strings.EqualFold(c.DefaultPrincipal.Realm, parts[1]) {
+				krbReferralSpn = types.PrincipalName{
+					NameType:   nametype.KRB_NT_SRV_INST,
+					NameString: []string{"krbtgt", strings.ToUpper(parts[1])},
+				}
+			}
+		}
+		var credReferral *credentials.Credential
+		if len(krbReferralSpn.NameString) != 0 {
+			credReferral, foundReferralTGT = c.GetEntry(krbReferralSpn)
+			if foundReferralTGT {
+				var tgt messages.Ticket
+				err = tgt.Unmarshal(credReferral.Ticket)
+				if err != nil {
+					return cl, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
+				}
+				referralRealm := credReferral.Server.PrincipalName.NameString[1]
+				cl.sessions.Entries[referralRealm] = &session{
+					realm:      referralRealm,
+					authTime:   credReferral.AuthTime,
+					endTime:    credReferral.EndTime,
+					renewTill:  credReferral.RenewTill,
+					tgt:        tgt,
+					sessionKey: credReferral.Key,
+					flags:      credReferral.TicketFlags,
+					cAddr:      credReferral.Addresses,
+				}
+			}
+		}
+	}
+
 	krbSpn := types.PrincipalName{
 		NameType:   nametype.KRB_NT_SRV_INST,
 		NameString: []string{"krbtgt", c.DefaultPrincipal.Realm},
 	}
+	/*
+		A ccache could contain a TGT for our realm, a service ticket for our realm,
+		a referral ticket e.g., a service ticket for another realms krbtgt service,
+		or a service ticket for another realm where the service is not krbtgt.
+		For a referral ticket, the fqdn of the SPN will be a realm.
+		For a service ticket for another realm, the fqdn in the realm will include
+		a hostname.
+	*/
 	if len(target) == 2 {
 		spn := types.PrincipalName{
 			NameType:   nametype.KRB_NT_SRV_INST,
 			NameString: target,
 		}
-		_, foundTGS = c.GetEntry(spn)
+		_, foundST = c.GetEntry(spn)
+	}
+	// See if there is any service ticket for krbTGT in any realm as it might suffice
+	for _, cred := range c.GetEntries() {
+		if strings.EqualFold(cred.Server.PrincipalName.NameString[0], "krbtgt") && !strings.EqualFold(cred.Server.Realm, c.DefaultPrincipal.Realm) {
+			foundOtherReferralTicket = true
+			//TODO Should all referral tickets be added as sessions?
+			var tgt messages.Ticket
+			err = tgt.Unmarshal(cred.Ticket)
+			if err != nil {
+				return cl, fmt.Errorf("Referral ticket bytes in cache are not valid: %v", err)
+			}
+			referralRealm := cred.Server.PrincipalName.NameString[1]
+			cl.sessions.Entries[referralRealm] = &session{
+				realm:      referralRealm,
+				authTime:   cred.AuthTime,
+				endTime:    cred.EndTime,
+				renewTill:  cred.RenewTill,
+				tgt:        tgt,
+				sessionKey: cred.Key,
+				flags:      cred.TicketFlags,
+				cAddr:      cred.Addresses,
+			}
+			break
+		}
 	}
 	cred, foundTGT := c.GetEntry(krbSpn)
-	if !foundTGT && !foundTGS {
-		return cl, errors.New("No usable TGT or TGS found in CCache")
+	if !foundTGT && !foundST && !foundReferralTGT && !foundOtherReferralTicket {
+		return cl, errors.New("No usable TGT or ST found in CCache")
 	}
 	if foundTGT {
 		var tgt messages.Ticket
@@ -145,6 +222,8 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 			renewTill:  cred.RenewTill,
 			tgt:        tgt,
 			sessionKey: cred.Key,
+			flags:      cred.TicketFlags,
+			cAddr:      cred.Addresses,
 		}
 	}
 	for _, cred := range c.GetEntries() {
@@ -160,6 +239,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 			cred.EndTime,
 			cred.RenewTill,
 			cred.Key,
+			cred.TicketFlags,
 		)
 	}
 	return cl, nil
@@ -181,6 +261,7 @@ func (cl *Client) AddCacheEntries(c *credentials.CCache) error {
 			cred.EndTime,
 			cred.RenewTill,
 			cred.Key,
+			cred.TicketFlags,
 		)
 	}
 	return nil
@@ -332,6 +413,7 @@ func (cl *Client) realmLogin(realm string) error {
 		return err
 	}
 
+	// Handle referral ticket
 	spn := types.PrincipalName{
 		NameType:   nametype.KRB_NT_SRV_INST,
 		NameString: []string{"krbtgt", realm},

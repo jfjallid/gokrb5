@@ -156,6 +156,37 @@ func (kt *Keytab) AddEntry(principalName, realm, password string, ts time.Time, 
 	return nil
 }
 
+func (kt *Keytab) AddKeyEntry(principalName, realm string, keyBytes []byte, ts time.Time, KVNO uint8, encType int32) error {
+	// Generate a key from NT Hash or AES key
+	princ, _ := types.ParseSPNString(principalName)
+	key, _, err := crypto.GetKeyFromHash(keyBytes, princ, realm, encType, types.PADataSequence{})
+	if err != nil {
+		return err
+	}
+
+	// Populate the keytab entry principal
+	ktep := newPrincipal()
+	ktep.NumComponents = int16(len(princ.NameString))
+	if kt.version == 1 {
+		ktep.NumComponents += 1
+	}
+
+	ktep.Realm = realm
+	ktep.Components = princ.NameString
+	ktep.NameType = princ.NameType
+
+	// Populate the keytab entry
+	e := newEntry()
+	e.Principal = ktep
+	e.Timestamp = ts
+	e.KVNO8 = KVNO
+	e.KVNO = uint32(KVNO)
+	e.Key = key
+
+	kt.Entries = append(kt.Entries, e)
+	return nil
+}
+
 // Create a new principal.
 func newPrincipal() principal {
 	var c []string
