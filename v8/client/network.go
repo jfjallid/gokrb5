@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jfjallid/gokrb5/v8/iana/errorcode"
 	"github.com/jfjallid/gokrb5/v8/messages"
+	"golang.org/x/net/proxy"
 )
 
 // SendToKDC performs network actions to send data to the KDC.
@@ -74,7 +76,7 @@ func (cl *Client) sendKDCUDP(realm string, b []byte) ([]byte, error) {
 	if err != nil {
 		return r, err
 	}
-	r, err = dialSendUDP(kdcs, b)
+	r, err = dialSendUDP(kdcs, b, cl.settings.GetDialTimeout())
 	if err != nil {
 		return r, err
 	}
@@ -82,22 +84,22 @@ func (cl *Client) sendKDCUDP(realm string, b []byte) ([]byte, error) {
 }
 
 // dialSendUDP establishes a UDP connection to a KDC.
-func dialSendUDP(kdcs map[int]string, b []byte) ([]byte, error) {
+func dialSendUDP(kdcs map[int]string, b []byte, timeout time.Duration) ([]byte, error) {
 	var errs []string
 	for i := 1; i <= len(kdcs); i++ {
-		conn, err := net.DialTimeout("udp", kdcs[i], 5*time.Second)
+		conn, err := net.DialTimeout("udp", kdcs[i], timeout)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("error establishing connection to %s: %v", kdcs[i], err))
 			continue
 		}
-		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 			errs = append(errs, fmt.Sprintf("error setting deadline on connection to %s: %v", kdcs[i], err))
 			continue
 		}
 		// conn is guaranteed to be a UDPConn
 		rb, err := sendUDP(conn.(*net.UDPConn), b)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("error sneding to %s: %v", kdcs[i], err))
+			errs = append(errs, fmt.Sprintf("error sending to %s: %v", kdcs[i], err))
 			continue
 		}
 		return rb, nil
@@ -132,7 +134,7 @@ func (cl *Client) sendKDCTCP(realm string, b []byte) ([]byte, error) {
 	if err != nil {
 		return r, err
 	}
-	r, err = dialSendTCP(kdcs, b)
+	r, err = dialSendTCP(kdcs, b, cl.settings.GetDialTimeout(), cl.settings.ProxyDialer())
 	if err != nil {
 		return r, err
 	}
@@ -140,22 +142,31 @@ func (cl *Client) sendKDCTCP(realm string, b []byte) ([]byte, error) {
 }
 
 // dialKDCTCP establishes a TCP connection to a KDC.
-func dialSendTCP(kdcs map[int]string, b []byte) ([]byte, error) {
+func dialSendTCP(kdcs map[int]string, b []byte, timeout time.Duration, proxyDialer proxy.Dialer) ([]byte, error) {
 	var errs []string
 	for i := 1; i <= len(kdcs); i++ {
-		conn, err := net.DialTimeout("tcp", kdcs[i], 5*time.Second)
+		var conn net.Conn
+		var err error
+		if proxyDialer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			conn, err = proxyDialer.(proxy.ContextDialer).DialContext(ctx, "tcp", kdcs[i])
+		} else {
+			conn, err = net.DialTimeout("tcp", kdcs[i], timeout)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("error establishing connection to %s: %v", kdcs[i], err))
 			continue
 		}
-		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 			errs = append(errs, fmt.Sprintf("error setting deadline on connection to %s: %v", kdcs[i], err))
 			continue
 		}
 		// conn is guaranteed to be a TCPConn
-		rb, err := sendTCP(conn.(*net.TCPConn), b)
+		//rb, err := sendTCP(conn.(*net.TCPConn), b)
+		rb, err := sendTCP(conn, b)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("error sneding to %s: %v", kdcs[i], err))
+			errs = append(errs, fmt.Sprintf("error sending to %s: %v", kdcs[i], err))
 			continue
 		}
 		return rb, nil
@@ -164,7 +175,7 @@ func dialSendTCP(kdcs map[int]string, b []byte) ([]byte, error) {
 }
 
 // sendTCP sends bytes to connection over TCP.
-func sendTCP(conn *net.TCPConn, b []byte) ([]byte, error) {
+func sendTCP(conn net.Conn, b []byte) ([]byte, error) {
 	defer conn.Close()
 	var r []byte
 	// RFC 4120 7.2.2 specifies the first 4 bytes indicate the length of the message in big endian order.

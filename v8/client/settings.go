@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // Settings holds optional client settings.
@@ -12,6 +15,8 @@ type Settings struct {
 	assumePreAuthentication bool
 	preAuthEType            int32
 	logger                  *log.Logger
+	proxyDialer             proxy.Dialer
+	dialTimout              time.Duration
 }
 
 // jsonSettings is used when marshaling the Settings details to JSON format.
@@ -23,6 +28,7 @@ type jsonSettings struct {
 // NewSettings creates a new client settings struct.
 func NewSettings(settings ...func(*Settings)) *Settings {
 	s := new(Settings)
+	s.dialTimout = time.Second * 5 // default value
 	for _, set := range settings {
 		set(s)
 	}
@@ -90,4 +96,32 @@ func (s *Settings) JSON() (string, error) {
 	}
 	return string(b), nil
 
+}
+
+// SetDialTimout used to configure the client with a custom timeout for establishing network connections
+//
+// s := NewSettings(SetDialTimout(time.Duration))
+func SetDialTimout(d time.Duration) func(*Settings) {
+	return func(s *Settings) {
+		s.dialTimout = d
+	}
+}
+
+// GetDialTimeout returns the client dial timeout duration
+func (s *Settings) GetDialTimeout() time.Duration {
+	return s.dialTimout
+}
+
+// SetProxyDialer used to configure the client to use an upstream proxy for all network communication
+//
+// s := NewSettings(SetProxyDialer(proxy.Dialer))
+func SetProxyDialer(dialer proxy.Dialer) func(*Settings) {
+	return func(s *Settings) {
+		s.proxyDialer = dialer
+	}
+}
+
+// ProxyDialer returns the client proxyDialer instance
+func (s *Settings) ProxyDialer() proxy.Dialer {
+	return s.proxyDialer
 }
