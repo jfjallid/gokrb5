@@ -13,6 +13,7 @@ import (
 type Settings struct {
 	disablePAFXFast         bool
 	assumePreAuthentication bool
+	requestPAPac            bool
 	preAuthEType            int32
 	logger                  *log.Logger
 	proxyDialer             proxy.Dialer
@@ -124,4 +125,18 @@ func SetProxyDialer(dialer proxy.Dialer) func(*Settings) {
 // ProxyDialer returns the client proxyDialer instance
 func (s *Settings) ProxyDialer() proxy.Dialer {
 	return s.proxyDialer
+}
+
+// RequestPAPac used to configure the client to request that the KDC include a PAC
+//
+// s := NewSettings(RequestPAPac(true))
+func RequestPAPac(b bool) func(*Settings) {
+	return func(s *Settings) {
+		s.requestPAPac = b
+	}
+}
+
+// RequestPAPac indicates that the client should request that the KDC includes a PAC
+func (s *Settings) RequestPAPac() bool {
+	return s.requestPAPac
 }

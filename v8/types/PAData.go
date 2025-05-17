@@ -50,7 +50,7 @@ func GetPAEncTSEncAsnMarshalled() ([]byte, error) {
 	}
 	b, err := asn1.Marshal(p)
 	if err != nil {
-		return b, fmt.Errorf("error mashaling PAEncTSEnc: %v", err)
+		return b, fmt.Errorf("error marshaling PAEncTSEnc: %v", err)
 	}
 	return b, nil
 }
@@ -152,4 +152,8 @@ func (pa *PAData) GetETypeInfo2() (d ETypeInfo2, err error) {
 	}
 	_, err = asn1.Unmarshal(pa.PADataValue, &d)
 	return
+}
+
+type PAPacRequest struct {
+	IncludePac bool `asn1:"explicit,tag:0"`
 }

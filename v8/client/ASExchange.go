@@ -13,12 +13,13 @@ import (
 
 // ASExchange performs an AS exchange for the client to retrieve a TGT.
 func (cl *Client) ASExchange(realm string, ASReq messages.ASReq, referral int) (messages.ASRep, error) {
+	var err error
 	if ok, err := cl.IsConfigured(); !ok {
 		return messages.ASRep{}, krberror.Errorf(err, krberror.ConfigError, "AS Exchange cannot be performed")
 	}
 
 	// Set PAData if required
-	err := setPAData(cl, nil, &ASReq)
+	err = setPAData(cl, nil, &ASReq)
 	if err != nil {
 		return messages.ASRep{}, krberror.Errorf(err, krberror.KRBMsgError, "AS Exchange Error: issue with setting PAData on AS_REQ")
 	}
@@ -80,6 +81,14 @@ func setPAData(cl *Client, krberr *messages.KRBError, ASReq *messages.ASReq) err
 	if !cl.settings.DisablePAFXFAST() {
 		pa := types.PAData{PADataType: patype.PA_REQ_ENC_PA_REP}
 		ASReq.PAData = append(ASReq.PAData, pa)
+	}
+	if cl.settings.RequestPAPac() {
+		// Set PA-PAC-REQUEST
+		paPacb, err := types.GetPAPacRequestAsnMarshalled()
+		if err != nil {
+			return krberror.Errorf(err, krberror.EncodingError, "error creating PAPacRequest for Pre-Authentication")
+		}
+		ASReq.PAData = append(ASReq.PAData, types.PAData{PADataType: patype.PA_PAC_REQUEST, PADataValue: paPacb})
 	}
 	if cl.settings.AssumePreAuthentication() {
 		// Identify the etype to use to encrypt the PA Data
