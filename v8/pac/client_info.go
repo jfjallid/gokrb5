@@ -2,8 +2,10 @@ package pac
 
 import (
 	"bytes"
+	"encoding/binary"
+	"unicode/utf16"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
+	"github.com/jfjallid/mstypes"
 )
 
 // ClientInfo implements https://msdn.microsoft.com/en-us/library/cc237951.aspx
@@ -28,4 +30,28 @@ func (k *ClientInfo) Unmarshal(b []byte) (err error) {
 	}
 	k.Name, err = r.UTF16String(int(k.NameLength))
 	return
+}
+
+func (k *ClientInfo) Marshal() (buf []byte, err error) {
+	w := bytes.NewBuffer(buf)
+	err = binary.Write(w, binary.LittleEndian, k.ClientID.LowDateTime)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, k.ClientID.HighDateTime)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, k.NameLength)
+	if err != nil {
+		return
+	}
+
+	uints := utf16.Encode([]rune(k.Name))
+	err = binary.Write(w, binary.LittleEndian, &uints)
+	if err != nil {
+		return
+	}
+
+	return w.Bytes(), nil
 }

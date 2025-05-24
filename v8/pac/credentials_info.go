@@ -8,8 +8,8 @@ import (
 	"github.com/jfjallid/gokrb5/v8/crypto"
 	"github.com/jfjallid/gokrb5/v8/iana/keyusage"
 	"github.com/jfjallid/gokrb5/v8/types"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 // https://msdn.microsoft.com/en-us/library/cc237931.aspx
@@ -77,7 +77,7 @@ type CredentialData struct {
 
 // Unmarshal converts the bytes provided into a CredentialData type.
 func (c *CredentialData) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	err = dec.Decode(c)
 	if err != nil {
 		err = fmt.Errorf("error unmarshaling KerbValidationInfo: %v", err)

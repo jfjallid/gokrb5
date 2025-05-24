@@ -2,6 +2,7 @@ package pac
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -9,7 +10,7 @@ import (
 	"github.com/jfjallid/gokrb5/v8/crypto"
 	"github.com/jfjallid/gokrb5/v8/iana/keyusage"
 	"github.com/jfjallid/gokrb5/v8/types"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
+	"github.com/jfjallid/mstypes"
 )
 
 const (
@@ -51,6 +52,24 @@ type InfoBuffer struct {
 	Offset       uint64 // A 64-bit unsigned integer in little-endian format that contains the offset to the beginning of the buffer, in bytes, from the beginning of the PACTYPE structure. The data offset MUST be a multiple of eight. The following sections specify the format of each type of element.
 }
 
+func (ib *InfoBuffer) Marshal() (b []byte, err error) {
+	w := bytes.NewBuffer([]byte{})
+	err = binary.Write(w, binary.LittleEndian, ib.ULType)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, ib.CBBufferSize)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, ib.Offset)
+	if err != nil {
+		return
+	}
+
+	return w.Bytes(), nil
+}
+
 // Unmarshal bytes into the PACType struct
 func (pac *PACType) Unmarshal(b []byte) (err error) {
 	pac.Data = b
@@ -85,9 +104,132 @@ func (pac *PACType) Unmarshal(b []byte) (err error) {
 	return nil
 }
 
+func (pac *PACType) Marshal() (b []byte, err error) {
+	if pac.Data == nil {
+		err = pac.EncodePACInfoBuffers()
+		if err != nil {
+			return
+		}
+	}
+	return pac.Data, nil
+}
+
+func (pac *PACType) EncodePACInfoBuffers() (err error) {
+	pac.Data = make([]byte, 8, 8) // Header
+	bufList := make([][]byte, 0)
+	pac.Buffers = []InfoBuffer{}
+
+	if pac.KerbValidationInfo != nil {
+		buf, err := pac.KerbValidationInfo.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding KerbValidationInfo: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypeKerbValidationInfo,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+	}
+	if pac.ClientInfo != nil {
+		buf, err := pac.ClientInfo.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding ClientInfo: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypePACClientInfo,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+	}
+	if pac.UPNDNSInfo != nil {
+		buf, err := pac.UPNDNSInfo.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding UPN_DNSInfo: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypeUPNDNSInfo,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+
+	}
+	if pac.ServerChecksum != nil {
+		buf, err := pac.ServerChecksum.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding ServerChecksum: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypePACServerSignatureData,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+	}
+	if pac.KDCChecksum != nil {
+		buf, err := pac.KDCChecksum.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding KDCChecksum: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypePACKDCSignatureData,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+	}
+
+	numBuffers := uint64(len(pac.Buffers))
+	pac.CBuffers = uint32(numBuffers)
+	signatureOffsets := make(map[uint64]uint32)
+	serverSignatureSize, err := pac.ServerChecksum.SignatureSize()
+	if err != nil {
+		return
+	}
+	kdcSignatureSize, err := pac.KDCChecksum.SignatureSize()
+	if err != nil {
+		return
+	}
+	offset := 8 + numBuffers*16
+	for i, _ := range pac.Buffers {
+		pac.Buffers[i].Offset = offset
+		if pac.Buffers[i].ULType == infoTypePACServerSignatureData {
+			// Keep track of ServerChecksum buffer offset and size
+			signatureOffsets[offset+4] = serverSignatureSize
+		} else if pac.Buffers[i].ULType == infoTypePACKDCSignatureData {
+			// Keep track of KDCChecksum buffer offset and size
+			signatureOffsets[offset+4] = kdcSignatureSize
+		}
+		ibBuf, err := pac.Buffers[i].Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding InfoBuffer: %v", err)
+		}
+		pac.Data = append(pac.Data, ibBuf...)
+		// The actual data buffers must be aligned on 8 byte boundary
+		offset = getBlockLength(offset + uint64(pac.Buffers[i].CBBufferSize))
+	}
+	// Add the actual encoded info buffers last
+	for i := range bufList {
+		padLen := getPadLength(len(bufList[i]))
+		pac.Data = append(pac.Data, append(bufList[i], make([]byte, padLen)...)...)
+	}
+	binary.LittleEndian.PutUint32(pac.Data[0:4], uint32(numBuffers))
+	binary.LittleEndian.PutUint32(pac.Data[4:8], uint32(0)) // pac.Version MUST be 0
+
+	// Keep a separate byte buffer with zero signatures, but otherwise identical
+	pac.ZeroSigData = make([]byte, len(pac.Data))
+	copy(pac.ZeroSigData, pac.Data)
+	for k, v := range signatureOffsets {
+		copy(pac.ZeroSigData[k:], make([]byte, v))
+	}
+	return nil
+}
+
 // ProcessPACInfoBuffers processes the PAC Info Buffers.
 // https://msdn.microsoft.com/en-us/library/cc237954.aspx
-func (pac *PACType) ProcessPACInfoBuffers(key types.EncryptionKey, l *log.Logger) error {
+func (pac *PACType) ProcessPACInfoBuffers(key types.EncryptionKey, l *log.Logger, verifyChecksum bool) error {
 	for _, buf := range pac.Buffers {
 		p := make([]byte, buf.CBBufferSize, buf.CBBufferSize)
 		copy(p, pac.Data[int(buf.Offset):int(buf.Offset)+int(buf.CBBufferSize)])
@@ -216,8 +358,10 @@ func (pac *PACType) ProcessPACInfoBuffers(key types.EncryptionKey, l *log.Logger
 		}
 	}
 
-	if ok, err := pac.verify(key); !ok {
-		return err
+	if verifyChecksum {
+		if ok, err := pac.verify(key); !ok {
+			return err
+		}
 	}
 
 	return nil
@@ -248,4 +392,14 @@ func (pac *PACType) verify(key types.EncryptionKey) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// Align on 8 byte boundary
+func getPadLength(dataLength int) int {
+	return (((dataLength + 7) / 8) * 8) - dataLength
+}
+
+// Align on 8 byte boundary
+func getBlockLength(dataLength uint64) uint64 {
+	return (((dataLength + 7) / 8) * 8)
 }

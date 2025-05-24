@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 const (
@@ -78,7 +78,7 @@ type SECPKGSupplementalCred struct {
 
 // Unmarshal converts the bytes provided into a SECPKGSupplementalCred.
 func (c *SECPKGSupplementalCred) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	err = dec.Decode(c)
 	if err != nil {
 		err = fmt.Errorf("error unmarshaling SECPKGSupplementalCred: %v", err)

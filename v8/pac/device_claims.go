@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 // Claims reference: https://msdn.microsoft.com/en-us/library/hh553895.aspx
@@ -18,7 +18,7 @@ type DeviceClaimsInfo struct {
 
 // Unmarshal bytes into the ClientClaimsInfo struct
 func (k *DeviceClaimsInfo) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	m := new(mstypes.ClaimsSetMetadata)
 	err = dec.Decode(m)
 	if err != nil {

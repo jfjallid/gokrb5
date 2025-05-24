@@ -48,8 +48,20 @@ func (a *AuthorizationData) Unmarshal(b []byte) error {
 	return err
 }
 
+// Marshal AuthorizationData struct into bytes.
+func (a *AuthorizationData) Marshal() (b []byte, err error) {
+	b, err = asn1.Marshal(*a)
+	return
+}
+
 // Unmarshal bytes into the AuthorizationDataEntry.
 func (a *AuthorizationDataEntry) Unmarshal(b []byte) error {
 	_, err := asn1.Unmarshal(b, a)
 	return err
+}
+
+// Marshal bytes into the AuthorizationDataEntry.
+func (a *AuthorizationDataEntry) Marshal() (b []byte, err error) {
+	b, err = asn1.Marshal(a)
+	return
 }

@@ -3,10 +3,13 @@ package pac
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"unicode/utf16"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 // KERB_VALIDATION_INFO flags.
@@ -48,9 +51,9 @@ type KerbValidationInfo struct {
 	UserFlags              uint32
 	UserSessionKey         mstypes.UserSessionKey
 	LogonServer            mstypes.RPCUnicodeString
-	LogonDomainName        mstypes.RPCUnicodeString
-	LogonDomainID          mstypes.RPCSID `ndr:"pointer"`
-	Reserved1              [2]uint32      // Has 2 elements
+	LogonDomainName        mstypes.RPCUnicodeString // NETBIOS name of domain the account belongs to
+	LogonDomainID          mstypes.RPCSID           `ndr:"pointer"`
+	Reserved1              [2]uint32                // Has 2 elements
 	UserAccountControl     uint32
 	SubAuthStatus          uint32
 	LastSuccessfulILogon   mstypes.FileTime
@@ -66,12 +69,105 @@ type KerbValidationInfo struct {
 
 // Unmarshal bytes into the DeviceInfo struct
 func (k *KerbValidationInfo) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	err = dec.Decode(k)
 	if err != nil {
 		err = fmt.Errorf("error unmarshaling KerbValidationInfo: %v", err)
 	}
 	return
+}
+
+func (k *KerbValidationInfo) Marshal() (b []byte, err error) {
+	enc := ndr.NewEncoder(bytes.NewBuffer(([]byte{})), true)
+	enc.SetEndianness(binary.LittleEndian)
+	b, err = enc.Encode(k)
+	if err != nil {
+		err = fmt.Errorf("error marshaling KerbValidationInfo: %v", err)
+	}
+	return
+}
+
+func writeFileTime(w io.Writer, ft mstypes.FileTime) (err error) {
+	err = binary.Write(w, binary.LittleEndian, ft.LowDateTime)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, ft.HighDateTime)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func toUnicode(s string) []byte {
+	// Credit to https://github.com/Azure/go-ntlmssp/blob/master/unicode.go for logic
+	uints := utf16.Encode([]rune(s))
+	b := bytes.Buffer{}
+	binary.Write(&b, binary.LittleEndian, &uints)
+	return b.Bytes()
+}
+
+func writeRPCUnicodeStr(w io.Writer, s mstypes.RPCUnicodeString) (err error) {
+	unc := toUnicode(s.Value)
+	var maxLen, actLen uint32
+	maxLen = uint32(s.MaximumLength / 2)
+	actLen = uint32(len(s.Value))
+	// MaxLength
+	err = binary.Write(w, binary.LittleEndian, maxLen)
+	if err != nil {
+		return
+	}
+	// Offset
+	err = binary.Write(w, binary.LittleEndian, uint32(0))
+	if err != nil {
+		return
+	}
+	// ActualLength
+	err = binary.Write(w, binary.LittleEndian, actLen)
+	if err != nil {
+		return
+	}
+	// Data
+	err = binary.Write(w, binary.LittleEndian, unc)
+	if err != nil {
+		return
+	}
+	// Handle when maxLength is larger then actualLength of string
+	diff := s.MaximumLength - s.Length
+	if diff > 0 {
+		err = binary.Write(w, binary.LittleEndian, make([]byte, diff))
+	}
+	return
+}
+
+func align(buf *bytes.Buffer, size int) {
+	diff := buf.Len() % size
+	if diff > 0 {
+		buf.Write(make([]byte, size-diff))
+	}
+}
+
+func writeSID(w io.Writer, sid mstypes.RPCSID) (err error) {
+
+	// Encode ACE SID
+	err = binary.Write(w, binary.LittleEndian, sid.Revision)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, sid.SubAuthorityCount)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, sid.IdentifierAuthority)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, sid.SubAuthority)
+	if err != nil {
+		return
+	}
+
+	return nil
 }
 
 // GetGroupMembershipSIDs returns a slice of strings containing the group membership SIDs found in the PAC.

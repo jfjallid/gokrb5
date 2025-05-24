@@ -2,9 +2,11 @@ package pac
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
 
 	"github.com/jfjallid/gokrb5/v8/iana/chksumtype"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
+	"github.com/jfjallid/mstypes"
 )
 
 /*
@@ -67,5 +69,42 @@ func (k *SignatureData) Unmarshal(b []byte) (rb []byte, err error) {
 	z := make([]byte, len(b), len(b))
 	copy(rb[4:4+c], z)
 
+	return
+}
+
+func (k *SignatureData) Marshal() (b []byte, err error) {
+	w := bytes.NewBuffer([]byte{})
+	err = binary.Write(w, binary.LittleEndian, k.SignatureType)
+	if err != nil {
+		return
+	}
+	err = binary.Write(w, binary.LittleEndian, k.Signature)
+	if err != nil {
+		return
+	}
+	if k.RODCIdentifier != 0 {
+		err = binary.Write(w, binary.LittleEndian, k.RODCIdentifier)
+		if err != nil {
+			return
+		}
+	}
+	return w.Bytes(), nil
+}
+
+func (k *SignatureData) SignatureSize() (s uint32, err error) {
+	switch k.SignatureType {
+	case chksumtype.KERB_CHECKSUM_HMAC_MD5_UNSIGNED:
+		s = 16
+	case uint32(chksumtype.HMAC_SHA1_96_AES128):
+		s = 12
+	case uint32(chksumtype.HMAC_SHA1_96_AES256):
+		s = 12
+	case uint32(chksumtype.HMAC_SHA256_128_AES128):
+		s = 16
+	case uint32(chksumtype.HMAC_SHA384_192_AES256):
+		s = 24
+	default:
+		err = fmt.Errorf("Could not determine size of invalid SignatureType: %d", k.SignatureType)
+	}
 	return
 }

@@ -2,10 +2,11 @@ package pac
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 // S4UDelegationInfo implements https://msdn.microsoft.com/en-us/library/cc237944.aspx
@@ -17,10 +18,20 @@ type S4UDelegationInfo struct {
 
 // Unmarshal bytes into the S4UDelegationInfo struct
 func (k *S4UDelegationInfo) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	err = dec.Decode(k)
 	if err != nil {
 		err = fmt.Errorf("error unmarshaling S4UDelegationInfo: %v", err)
+	}
+	return
+}
+
+func (k *S4UDelegationInfo) Marshal() (b []byte, err error) {
+	enc := ndr.NewEncoder(bytes.NewBuffer(([]byte{})), true)
+	enc.SetEndianness(binary.LittleEndian)
+	b, err = enc.Encode(k)
+	if err != nil {
+		err = fmt.Errorf("error marshaling S4UDelegationInfo: %v", err)
 	}
 	return
 }

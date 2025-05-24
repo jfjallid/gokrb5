@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/mstypes"
-	"github.com/jfjallid/gokrb5/v8/imported/rpc/v2/ndr"
+	"github.com/jfjallid/mstypes"
+	"github.com/jfjallid/ndr"
 )
 
 // DeviceInfo implements https://msdn.microsoft.com/en-us/library/hh536402.aspx
@@ -23,7 +23,7 @@ type DeviceInfo struct {
 
 // Unmarshal bytes into the DeviceInfo struct
 func (k *DeviceInfo) Unmarshal(b []byte) (err error) {
-	dec := ndr.NewDecoder(bytes.NewReader(b))
+	dec := ndr.NewDecoder(bytes.NewReader(b), true)
 	err = dec.Decode(k)
 	if err != nil {
 		err = fmt.Errorf("error unmarshaling DeviceInfo: %v", err)
