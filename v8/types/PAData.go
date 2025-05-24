@@ -154,6 +154,37 @@ func (pa *PAData) GetETypeInfo2() (d ETypeInfo2, err error) {
 	return
 }
 
+// MS-SFU 2.2.1
+type PAForUser struct {
+	UserName    PrincipalName `asn1:"explicit,tag:0"`
+	UserRealm   string        `asn1:"explicit,optional,generalstring,tag:1"`
+	Chksum      Checksum      `asn1:"explicit,optional,tag:2"`
+	AuthPackage string        `asn1:"explicit,optional,generalstring,tag:3"`
+}
+
+// MS-SFU 2.2.5
+type PAPacOptions struct {
+	Flags asn1.BitString `asn1:"explicit,tag:0"`
+}
+
 type PAPacRequest struct {
 	IncludePac bool `asn1:"explicit,tag:0"`
+}
+
+func GetPAPacOptionsAsnMarshalled(flags []int) ([]byte, error) {
+	p := PAPacOptions{}
+	SetFlags(&p.Flags, flags)
+	b, err := asn1.Marshal(p)
+	if err != nil {
+		return b, fmt.Errorf("error marshaling PAPacOptions: %v", err)
+	}
+	return b, nil
+}
+
+func GetPAPacRequestAsnMarshalled() ([]byte, error) {
+	b, err := asn1.Marshal(PAPacRequest{IncludePac: true})
+	if err != nil {
+		return b, fmt.Errorf("error marshaling PAPacRequest: %v", err)
+	}
+	return b, nil
 }

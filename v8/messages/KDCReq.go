@@ -175,6 +175,14 @@ func NewUser2UserTGSReq(cname types.PrincipalName, kdcRealm string, c *config.Co
 	return a, err
 }
 
+func NewS4UTGSReq(cname, sname types.PrincipalName, kdcRealm string, c *config.Config) (TGSReq, error) {
+	a, err := tgsReq(cname, sname, kdcRealm, false, c)
+	if err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
 // tgsReq populates the fields for a TGS_REQ
 func tgsReq(cname, sname types.PrincipalName, kdcRealm string, renewal bool, c *config.Config) (TGSReq, error) {
 	nonce, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt32))
