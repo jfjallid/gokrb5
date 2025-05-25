@@ -24,6 +24,8 @@ const (
 	infoTypePACClientClaimsInfo    uint32 = 13
 	infoTypePACDeviceInfo          uint32 = 14
 	infoTypePACDeviceClaimsInfo    uint32 = 15
+	infoTypePacAttributesInfo      uint32 = 17
+	infoTypePacRequestorSid        uint32 = 18
 )
 
 // PACType implements: https://msdn.microsoft.com/en-us/library/cc237950.aspx
@@ -42,6 +44,8 @@ type PACType struct {
 	ClientClaimsInfo   *ClientClaimsInfo
 	DeviceInfo         *DeviceInfo
 	DeviceClaimsInfo   *DeviceClaimsInfo
+	PacRequestorSid    *PacRequestorSid
+	PacAttributesInfo  *PacAttributesInfo
 	ZeroSigData        []byte
 }
 
@@ -155,6 +159,30 @@ func (pac *PACType) EncodePACInfoBuffers() (err error) {
 		bufList = append(bufList, buf)
 		pac.Buffers = append(pac.Buffers, ib)
 
+	}
+	if pac.PacRequestorSid != nil {
+		buf, err := pac.PacRequestorSid.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding PacRequestorSid: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypePacRequestorSid,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
+	}
+	if pac.PacAttributesInfo != nil {
+		buf, err := pac.PacAttributesInfo.Marshal()
+		if err != nil {
+			return fmt.Errorf("error encoding PacAttributesInfo: %v", err)
+		}
+		ib := InfoBuffer{
+			ULType:       infoTypePacAttributesInfo,
+			CBBufferSize: uint32(len(buf)),
+		}
+		bufList = append(bufList, buf)
+		pac.Buffers = append(pac.Buffers, ib)
 	}
 	if pac.ServerChecksum != nil {
 		buf, err := pac.ServerChecksum.Marshal()
@@ -355,6 +383,30 @@ func (pac *PACType) ProcessPACInfoBuffers(key types.EncryptionKey, l *log.Logger
 				continue
 			}
 			pac.DeviceClaimsInfo = &k
+		case infoTypePacRequestorSid:
+			if pac.PacRequestorSid != nil {
+				//Must ignore subsequent buffers of this type
+				continue
+			}
+			var k PacRequestorSid
+			err := k.Unmarshal(p)
+			if err != nil {
+				l.Printf("could not process PacRequestorSid: %v\n", err)
+				continue
+			}
+			pac.PacRequestorSid = &k
+		case infoTypePacAttributesInfo:
+			if pac.PacAttributesInfo != nil {
+				//Ignore subsequent buffers of this type
+				continue
+			}
+			var k PacAttributesInfo
+			err := k.Unmarshal(p)
+			if err != nil {
+				l.Printf("could not process PacAttributesInfo: %v\n", err)
+				continue
+			}
+			pac.PacAttributesInfo = &k
 		}
 	}
 

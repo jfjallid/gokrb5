@@ -55,13 +55,18 @@ type TransitedEncoding struct {
 
 // NewTicket creates a new Ticket instance.
 func NewTicket(cname types.PrincipalName, crealm string, sname types.PrincipalName, srealm string, flags asn1.BitString, sktab *keytab.Keytab, eTypeID int32, kvno int, authTime, startTime, endTime, renewTill time.Time) (Ticket, types.EncryptionKey, error) {
+	tkt, sessionKey, _, err := NewTicketExt(cname, crealm, sname, srealm, flags, sktab, eTypeID, kvno, authTime, startTime, endTime, renewTill, nil)
+	return tkt, sessionKey, err
+}
+
+func NewTicketExt(cname types.PrincipalName, crealm string, sname types.PrincipalName, srealm string, flags asn1.BitString, sktab *keytab.Keytab, eTypeID int32, kvno int, authTime, startTime, endTime, renewTill time.Time, pType *pac.PACType) (Ticket, types.EncryptionKey, EncTicketPart, error) {
 	etype, err := crypto.GetEtype(eTypeID)
 	if err != nil {
-		return Ticket{}, types.EncryptionKey{}, krberror.Errorf(err, krberror.EncryptingError, "error getting etype for new ticket")
+		return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncryptingError, "error getting etype for new ticket")
 	}
 	sessionKey, err := types.GenerateEncryptionKey(etype)
 	if err != nil {
-		return Ticket{}, types.EncryptionKey{}, krberror.Errorf(err, krberror.EncryptingError, "error generating session key")
+		return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncryptingError, "error generating session key")
 	}
 
 	etp := EncTicketPart{
@@ -75,18 +80,67 @@ func NewTicket(cname types.PrincipalName, crealm string, sname types.PrincipalNa
 		EndTime:   endTime,
 		RenewTill: renewTill,
 	}
-	b, err := asn1.Marshal(etp)
-	if err != nil {
-		return Ticket{}, types.EncryptionKey{}, krberror.Errorf(err, krberror.EncodingError, "error marshalling ticket encpart")
-	}
-	b = asn1tools.AddASNAppTag(b, asnAppTag.EncTicketPart)
 	skey, _, err := sktab.GetEncryptionKey(sname, srealm, kvno, eTypeID)
 	if err != nil {
-		return Ticket{}, types.EncryptionKey{}, krberror.Errorf(err, krberror.EncryptingError, "error getting encryption key for new ticket")
+		return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncryptingError, "error getting encryption key for new ticket")
 	}
+
+	if pType != nil {
+		err = pType.EncodePACInfoBuffers()
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncodingError, "error encoding PacInfoBuffers")
+		}
+		checksumEtype, err := crypto.GetChksumEtype(etype.GetHashID())
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncryptingError, "error getting checksum eType")
+		}
+		sig1Data, err := checksumEtype.GetChecksumHash(skey.KeyValue, pType.ZeroSigData, keyusage.KERB_NON_KERB_CKSUM_SALT)
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.ChksumError, "error getting checksum for Server Signature in PAC")
+		}
+		pType.ServerChecksum.Signature = sig1Data
+		sig2Data, err := checksumEtype.GetChecksumHash(skey.KeyValue, sig1Data, keyusage.KERB_NON_KERB_CKSUM_SALT)
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.ChksumError, "error getting checksum for KDC Signature in PAC")
+		}
+		pType.KDCChecksum.Signature = sig2Data
+		//Reencode the PacInfoBuffers, this time including the proper signatures
+		err = pType.EncodePACInfoBuffers()
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncodingError, "error reencoding PacInfoBuffers")
+		}
+		pTypeBuf, err := pType.Marshal()
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncodingError, "error marshalling PACType structure")
+		}
+		var ad2 types.AuthorizationData
+		ad2 = []types.AuthorizationDataEntry{
+			types.AuthorizationDataEntry{
+				ADType: adtype.ADWin2KPAC,
+				ADData: pTypeBuf,
+			},
+		}
+		ad2Bytes, err := ad2.Marshal()
+		if err != nil {
+			return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncodingError, "error marshalling AuthorizationData structure")
+		}
+
+		etp.AuthorizationData = []types.AuthorizationDataEntry{
+			types.AuthorizationDataEntry{
+				ADType: adtype.ADIfRelevant,
+				ADData: ad2Bytes,
+			},
+		}
+	}
+
+	b, err := asn1.Marshal(etp)
+	if err != nil {
+		return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncodingError, "error marshalling ticket encpart")
+	}
+	b = asn1tools.AddASNAppTag(b, asnAppTag.EncTicketPart)
 	ed, err := crypto.GetEncryptedData(b, skey, keyusage.KDC_REP_TICKET, kvno)
 	if err != nil {
-		return Ticket{}, types.EncryptionKey{}, krberror.Errorf(err, krberror.EncryptingError, "error encrypting ticket encpart")
+		return Ticket{}, types.EncryptionKey{}, EncTicketPart{}, krberror.Errorf(err, krberror.EncryptingError, "error encrypting ticket encpart")
 	}
 	tkt := Ticket{
 		TktVNO:  iana.PVNO,
@@ -94,7 +148,7 @@ func NewTicket(cname types.PrincipalName, crealm string, sname types.PrincipalNa
 		SName:   sname,
 		EncPart: ed,
 	}
-	return tkt, sessionKey, nil
+	return tkt, sessionKey, etp, nil
 }
 
 // Unmarshal bytes b into a Ticket struct.
@@ -105,6 +159,8 @@ func (t *Ticket) Unmarshal(b []byte) error {
 
 // Marshal the Ticket.
 func (t *Ticket) Marshal() ([]byte, error) {
+	// Make sure DecryptedEncPart is empty
+	t.DecryptedEncPart = EncTicketPart{}
 	b, err := asn1.Marshal(*t)
 	if err != nil {
 		return nil, err
@@ -237,7 +293,7 @@ func (t *Ticket) GetPACType(keytab *keytab.Keytab, sname *types.PrincipalName, l
 				if err != nil {
 					return isPAC, p, NewKRBError(t.SName, t.Realm, errorcode.KRB_AP_ERR_NOKEY, fmt.Sprintf("Could not get key from keytab: %v", err))
 				}
-				err = p.ProcessPACInfoBuffers(key, l)
+				err = p.ProcessPACInfoBuffers(key, l, true)
 				return isPAC, p, err
 			}
 		}
