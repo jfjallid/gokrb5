@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jfjallid/gofork/encoding/asn1"
 	"github.com/jfjallid/gokrb5/v8/config"
 	"github.com/jfjallid/gokrb5/v8/credentials"
 	"github.com/jfjallid/gokrb5/v8/crypto"
@@ -520,4 +521,177 @@ func (cl *Client) Print(w io.Writer) {
 
 	k, _ := cl.Credentials.Keytab().JSON()
 	fmt.Fprintf(w, "Keytab:\n%s\n", k)
+}
+
+func (cl *Client) GetTGT(domain string) (tgt messages.Ticket, sessionKey types.EncryptionKey, err error) {
+	return cl.sessionTGT(domain)
+}
+
+func (cl *Client) addTGTToCCache(cache *credentials.CCache, clientPrincipal types.PrincipalName, clientRealm string) (err error) {
+	var flags asn1.BitString
+	clientRealm = strings.ToUpper(clientRealm)
+	if clientRealm == "" {
+		clientRealm = cl.Credentials.Realm()
+	}
+	principal := credentials.NewPrincipal(clientPrincipal, clientRealm)
+	var cAddr []types.HostAddress
+	flags, cAddr, err = cl.sessionTGTDetails(clientRealm)
+	if err != nil {
+		return
+	}
+	var tgt messages.Ticket
+	var sessionKey types.EncryptionKey
+	tgt, sessionKey, err = cl.sessionTGT(clientRealm)
+	if err != nil {
+		return
+	}
+	var authTime, endTime, renewTime time.Time
+	authTime, endTime, renewTime, _, err = cl.sessionTimes(clientRealm)
+	if err != nil {
+		return
+	}
+	var tgtBytes []byte
+	kdcPrincipal := credentials.NewPrincipal(tgt.SName, tgt.Realm)
+	tgtBytes, err = tgt.Marshal()
+	if err != nil {
+		return
+	}
+	credTGT := &credentials.Credential{
+		Client:      principal,
+		Server:      kdcPrincipal,
+		Key:         sessionKey,
+		AuthTime:    authTime,
+		StartTime:   authTime,
+		EndTime:     endTime,
+		RenewTill:   renewTime,
+		TicketFlags: flags,
+		Addresses:   cAddr,
+		Ticket:      tgtBytes,
+	}
+	cache.AddCredential(credTGT)
+	return
+}
+
+func (cl *Client) SaveAllTicketsToCCache(ccache *credentials.CCache, clientPrincipal types.PrincipalName, clientRealm string) (err error) {
+	err = cl.addTGTToCCache(ccache, clientPrincipal, clientRealm)
+	if err != nil {
+		fmt.Printf("Couldn't save session TGT for userDomain: %s because: %s\n", clientRealm, err.Error())
+	}
+	entries := cl.cache.getEntries()
+	for _, entry := range entries {
+		if entry.SPN == "krbtgt/"+cl.Credentials.Realm() {
+			// skip
+			continue
+		}
+		if ccache.Contains(entry.Ticket.SName) {
+			// Skip since already in the ccache
+			continue
+		}
+		var ticketBytes []byte
+		server := credentials.NewPrincipal(entry.Ticket.SName, cl.Credentials.Realm())
+		ticketBytes, err = entry.Ticket.Marshal()
+		if err != nil {
+			return
+		}
+
+		cred := &credentials.Credential{
+			Client:      credentials.NewPrincipal(clientPrincipal, clientRealm),
+			Server:      server,
+			Key:         entry.SessionKey,
+			AuthTime:    entry.AuthTime,
+			StartTime:   entry.StartTime,
+			EndTime:     entry.EndTime,
+			RenewTill:   entry.RenewTill,
+			TicketFlags: entry.Flags,
+			Ticket:      ticketBytes,
+		}
+		ccache.AddCredential(cred)
+	}
+	return
+}
+
+func (cl *Client) SaveSPNToCCache(ccache *credentials.CCache, clientPrincipal types.PrincipalName, clientRealm, spn, altService string) (err error) {
+	var ticketBytes []byte
+	var cred *credentials.Credential
+	principal := credentials.NewPrincipal(clientPrincipal, clientRealm)
+
+	parts := strings.Split(spn, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("Invalid SPN!")
+	}
+	if strings.EqualFold(parts[0], "krbtgt") {
+		var tgt messages.Ticket
+		var sessionKey types.EncryptionKey
+		var flags asn1.BitString
+		var cAddr []types.HostAddress
+		tgt, sessionKey, err = cl.GetTGT(parts[1])
+		if err != nil {
+			return err
+		}
+		flags, cAddr, err = cl.sessionTGTDetails(parts[1])
+		if err != nil {
+			return
+		}
+		var authTime, endTime, renewTime time.Time
+		authTime, endTime, renewTime, _, err = cl.sessionTimes(cl.Credentials.Realm())
+		if err != nil {
+			return
+		}
+		var tgtBytes []byte
+		kdcPrincipal := credentials.NewPrincipal(tgt.SName, tgt.Realm)
+		tgtBytes, err = tgt.Marshal()
+		if err != nil {
+			return
+		}
+
+		cred = &credentials.Credential{
+			Client:      principal,
+			Server:      kdcPrincipal,
+			Key:         sessionKey,
+			AuthTime:    authTime,
+			StartTime:   authTime,
+			EndTime:     endTime,
+			RenewTill:   renewTime,
+			TicketFlags: flags,
+			Addresses:   cAddr,
+			Ticket:      tgtBytes,
+		}
+	} else {
+		entry, found := cl.cache.getEntry(spn)
+		if !found {
+			err = fmt.Errorf("Service Ticket not found in cache with SPN: %s", spn)
+			return
+		}
+		server := credentials.NewPrincipal(entry.Ticket.SName, entry.Ticket.Realm)
+		if altService != "" {
+			newSPN := ""
+			if strings.Contains(altService, "/") {
+				newSPN = altService
+			} else {
+				// Assume that the SPN is verified to be valid and contains a /
+				newSPN = altService + "/" + parts[1]
+			}
+			// Replace Sname in ticket for spn
+			server.PrincipalName = types.NewPrincipalName(nametype.KRB_NT_SRV_INST, newSPN)
+			entry.Ticket.SName = server.PrincipalName
+		}
+
+		ticketBytes, err = entry.Ticket.Marshal()
+		if err != nil {
+			return
+		}
+		cred = &credentials.Credential{
+			Client:      principal,
+			Server:      server,
+			Key:         entry.SessionKey,
+			AuthTime:    entry.AuthTime,
+			StartTime:   entry.StartTime,
+			EndTime:     entry.EndTime,
+			RenewTill:   entry.RenewTill,
+			TicketFlags: entry.Flags,
+			Ticket:      ticketBytes,
+		}
+	}
+	ccache.AddCredential(cred)
+	return nil
 }
