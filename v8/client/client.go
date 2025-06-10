@@ -120,6 +120,9 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		cache: NewCache(),
 	}
 	// Check if we are targeting a referral ticket, and if it already exists in the ccache.
+	if target != nil && len(target) < 2 {
+		return nil, fmt.Errorf("Invalid SPN. A SPN must contain a service and a FQDN or Netbios name")
+	}
 	if target != nil {
 		if strings.EqualFold(target[0], "krbtgt") {
 			if !strings.EqualFold(c.DefaultPrincipal.Realm, target[1]) {
@@ -132,7 +135,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		} else {
 			parts := strings.SplitN(target[1], ".", 2)
 			// When we are targeting a cross-realm SPN, check if we already have a referral ticket
-			if !strings.EqualFold(c.DefaultPrincipal.Realm, parts[1]) {
+			if len(parts) > 1 && !strings.EqualFold(c.DefaultPrincipal.Realm, parts[1]) {
 				krbReferralSpn = types.PrincipalName{
 					NameType:   nametype.KRB_NT_SRV_INST,
 					NameString: []string{"krbtgt", strings.ToUpper(parts[1])},

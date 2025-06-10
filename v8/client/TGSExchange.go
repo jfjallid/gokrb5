@@ -107,6 +107,7 @@ func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, ty
 		return tkt, skey, nil
 	}
 	parts := strings.Split(spn, "/")
+	// Should perhaps support SPNs of the format <service class>/<host>:<port>/<service name>
 	if len(parts) != 2 {
 		return messages.Ticket{}, types.EncryptionKey{}, fmt.Errorf("Invalid SPN")
 	}
@@ -114,8 +115,8 @@ func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, ty
 	var realm string
 	if strings.ToLower(parts[0]) == "krbtgt" {
 		realm = strings.ToUpper(parts[1])
-	} else {
-		// Strip away host name
+	} else if strings.Contains(parts[1], ".") {
+		// Strip away host name if it is a FQDN
 		parts = strings.SplitN(parts[1], ".", 2)
 		realm = strings.ToUpper(parts[1])
 	}
