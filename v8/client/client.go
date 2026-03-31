@@ -185,11 +185,10 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		}
 		_, foundST = c.GetEntry(spn)
 	}
-	// See if there is any service ticket for krbTGT in any realm as it might suffice
+	// Load all referral tickets (krbtgt for foreign realms) as sessions
 	for _, cred := range c.GetEntries() {
 		if strings.EqualFold(cred.Server.PrincipalName.NameString[0], "krbtgt") && !strings.EqualFold(cred.Server.Realm, c.DefaultPrincipal.Realm) {
 			foundOtherReferralTicket = true
-			//TODO Should all referral tickets be added as sessions?
 			var tgt messages.Ticket
 			err = tgt.Unmarshal(cred.Ticket)
 			if err != nil {
@@ -206,7 +205,6 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 				flags:      cred.TicketFlags,
 				cAddr:      cred.Addresses,
 			}
-			break
 		}
 	}
 	cred, foundTGT := c.GetEntry(krbSpn)
@@ -247,6 +245,48 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		)
 	}
 	return cl, nil
+}
+
+func NewFromTicket(c *credentials.Credential, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
+	cl := &Client{
+		Credentials: credentials.New(c.Client.PrincipalName.PrincipalNameString(), c.Client.Realm),
+		Config:      krb5conf,
+		settings:    NewSettings(settings...),
+		sessions: &sessions{
+			Entries: make(map[string]*session),
+		},
+		cache: NewCache(),
+	}
+	err := cl.AddTicketToSession(c, "")
+	if err != nil {
+		return nil, err
+	}
+	return cl, nil
+}
+
+func (cl *Client) AddTicketToSession(c *credentials.Credential, realm string) error {
+	var tgt messages.Ticket
+	err := tgt.Unmarshal(c.Ticket)
+	if err != nil {
+		return fmt.Errorf("TGT bytes in cache are not valid: %v", err)
+	}
+
+	if realm == "" {
+		realm = c.Client.Realm
+	}
+
+	cl.sessions.Entries[realm] = &session{
+		realm:      c.Client.Realm,
+		authTime:   c.AuthTime,
+		endTime:    c.EndTime,
+		renewTill:  c.RenewTill,
+		tgt:        tgt,
+		sessionKey: c.Key,
+		flags:      c.TicketFlags,
+		cAddr:      c.Addresses,
+	}
+
+	return nil
 }
 
 // AddCacheEntries create populates an existing cache with new tickets
@@ -362,6 +402,7 @@ func (cl *Client) IsConfigured() (bool, error) {
 
 // Login the client with the KDC via an AS exchange.
 func (cl *Client) Login() error {
+
 	if ok, err := cl.IsConfigured(); !ok {
 		return err
 	}
@@ -591,7 +632,7 @@ func (cl *Client) SaveAllTicketsToCCache(ccache *credentials.CCache, clientPrinc
 			continue
 		}
 		var ticketBytes []byte
-		server := credentials.NewPrincipal(entry.Ticket.SName, cl.Credentials.Realm())
+		server := credentials.NewPrincipal(entry.Ticket.SName, entry.Ticket.Realm)
 		ticketBytes, err = entry.Ticket.Marshal()
 		if err != nil {
 			return

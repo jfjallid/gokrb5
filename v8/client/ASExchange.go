@@ -13,6 +13,10 @@ import (
 
 // ASExchange performs an AS exchange for the client to retrieve a TGT.
 func (cl *Client) ASExchange(realm string, ASReq messages.ASReq, referral int) (messages.ASRep, error) {
+	return cl.ASExchangeExt(realm, ASReq, referral, true)
+}
+
+func (cl *Client) ASExchangeExt(realm string, ASReq messages.ASReq, referral int, verify bool) (messages.ASRep, error) {
 	var err error
 	if ok, err := cl.IsConfigured(); !ok {
 		return messages.ASRep{}, krberror.Errorf(err, krberror.ConfigError, "AS Exchange cannot be performed")
@@ -70,8 +74,10 @@ func (cl *Client) ASExchange(realm string, ASReq messages.ASReq, referral int) (
 	if err != nil {
 		return messages.ASRep{}, krberror.Errorf(err, krberror.EncodingError, "AS Exchange Error: failed to process the AS_REP")
 	}
-	if ok, err := ASRep.Verify(cl.Config, cl.Credentials, ASReq); !ok {
-		return messages.ASRep{}, krberror.Errorf(err, krberror.KRBMsgError, "AS Exchange Error: AS_REP is not valid or client password/keytab incorrect")
+	if verify {
+		if ok, err := ASRep.Verify(cl.Config, cl.Credentials, ASReq); !ok {
+			return messages.ASRep{}, krberror.Errorf(err, krberror.KRBMsgError, "AS Exchange Error: AS_REP is not valid or client password/keytab incorrect")
+		}
 	}
 	return ASRep, nil
 }

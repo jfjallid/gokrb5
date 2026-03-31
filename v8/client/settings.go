@@ -30,6 +30,7 @@ type jsonSettings struct {
 func NewSettings(settings ...func(*Settings)) *Settings {
 	s := new(Settings)
 	s.dialTimout = time.Second * 5 // default value
+	s.requestPAPac = true          // default value
 	for _, set := range settings {
 		set(s)
 	}

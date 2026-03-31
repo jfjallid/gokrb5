@@ -1,7 +1,6 @@
 package client
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/jfjallid/gokrb5/v8/iana/flags"
@@ -106,32 +105,48 @@ func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, ty
 		// Already a valid ticket in the cache
 		return tkt, skey, nil
 	}
-	parts := strings.Split(spn, "/")
-	// Should perhaps support SPNs of the format <service class>/<host>:<port>/<service name>
-	if len(parts) != 2 {
-		return messages.Ticket{}, types.EncryptionKey{}, fmt.Errorf("Invalid SPN")
+	// We want to support multiple formats of SPNs so let's try to figure out which Principal name type to use
+	serverSPNType := nametype.KRB_NT_UNKNOWN
+	if strings.Contains(spn, "/") {
+		serverSPNType = nametype.KRB_NT_SRV_INST
+	} else {
+		// Most flexible type
+		serverSPNType = nametype.KRB_NT_ENTERPRISE
 	}
+
+	/*
+		use dcDomain to manually force which realm to use?
+		in some cases we want to specify the realm to use for retrieving a TGT from the session.
+		Particularly useful in hybrid AD scenarios.
+
+	*/
 	// Check if cross realm
 	var realm string
-	if strings.ToLower(parts[0]) == "krbtgt" {
-		realm = strings.ToUpper(parts[1])
-	} else if strings.Contains(parts[1], ".") {
-		// Strip away host name if it is a FQDN
-		parts = strings.SplitN(parts[1], ".", 2)
-		realm = strings.ToUpper(parts[1])
+	if dcDomain != "" {
+		realm = dcDomain
+	}
+	if realm == "" {
+		parts := strings.Split(spn, "/")
+		if len(parts) > 1 {
+			// Seems to be NT_SRV_INST SPN so let's check which service is targeted
+			if strings.ToLower(parts[0]) == "krbtgt" {
+				realm = strings.ToUpper(parts[1])
+			} else if strings.Contains(parts[1], ".") {
+				// Is this relavant?
+				// Strip away host name if it is a FQDN
+				parts = strings.SplitN(parts[1], ".", 2)
+				realm = strings.ToUpper(parts[1])
+			}
+		}
 	}
 	// Handle a more advanced scenario where a referral ticket is required for communication
 	// with another kerberos realm/domain
-	if dcDomain != "" && !strings.EqualFold(cl.Credentials.Realm(), dcDomain) {
+	if realm == "" && dcDomain != "" && !strings.EqualFold(cl.Credentials.Realm(), dcDomain) {
 		// If client realm is not same as DC Realm we should look for a referral ticket and not for a TGT
 		realm = dcDomain
 	}
 
-	spnNameType := nametype.KRB_NT_PRINCIPAL
-	if strings.Contains(spn, "/") {
-		spnNameType = nametype.KRB_NT_SRV_INST
-	}
-	princ := types.NewPrincipalName(spnNameType, spn)
+	princ := types.NewPrincipalName(serverSPNType, spn)
 	if realm == "" {
 		realm = cl.spnRealm(princ)
 	}
