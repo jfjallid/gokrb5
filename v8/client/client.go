@@ -25,11 +25,20 @@ import (
 
 // Client side configuration and state.
 type Client struct {
-	Credentials *credentials.Credentials
-	Config      *config.Config
-	settings    *Settings
-	sessions    *sessions
-	cache       *Cache
+	Credentials      *credentials.Credentials
+	Config           *config.Config
+	settings         *Settings
+	sessions         *sessions
+	cache            *Cache
+	pkInitClient     interface{}        // *pkinit.PKINITClient, set during PKINIT AS exchange
+	pkInitDerivedKey *types.EncryptionKey // DH-derived key from PKINIT, needed for PAC credential decryption
+}
+
+// PKINITDerivedKey returns the DH-derived key from PKINIT authentication.
+// This key is the AS reply key used to decrypt PAC_CREDENTIAL_INFO.
+// Returns nil if the client did not authenticate via PKINIT.
+func (cl *Client) PKINITDerivedKey() *types.EncryptionKey {
+	return cl.pkInitDerivedKey
 }
 
 // NewWithPassword creates a new client from a password credential.
@@ -87,6 +96,20 @@ func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, set
 	}
 
 	return c
+}
+
+// NewWithPFX creates a new client from a PFX (PKCS#12) certificate file for PKINIT authentication.
+func NewWithPFX(username, realm string, pfxData []byte, pfxPass string, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+	creds := credentials.New(username, realm)
+	return &Client{
+		Credentials: creds.WithPFX(pfxData, pfxPass),
+		Config:      krb5conf,
+		settings:    NewSettings(settings...),
+		sessions: &sessions{
+			Entries: make(map[string]*session),
+		},
+		cache: NewCache(),
+	}
 }
 
 // NewWithKeytab creates a new client from a keytab credential.
@@ -381,10 +404,10 @@ func (cl *Client) IsConfigured() (bool, error) {
 		return false, errors.New("client does not have a define realm")
 	}
 	// Client needs to have either a password, keytab or a session already (later when loading from CCache)
-	if !cl.Credentials.HasPassword() && !cl.Credentials.HasKeytab() && !cl.Credentials.HasNTHash() && !cl.Credentials.HasAESKey() {
+	if !cl.Credentials.HasPassword() && !cl.Credentials.HasKeytab() && !cl.Credentials.HasNTHash() && !cl.Credentials.HasAESKey() && !cl.Credentials.HasPFX() {
 		authTime, _, _, _, err := cl.sessionTimes(cl.Credentials.Domain())
 		if err != nil || authTime.IsZero() {
-			return false, errors.New("client has neither a keytab nor a password nor a password hash set and no session")
+			return false, errors.New("client has neither a keytab nor a password nor a password hash nor a PFX certificate set and no session")
 		}
 	}
 	if !cl.Config.LibDefaults.DNSLookupKDC {
@@ -406,7 +429,7 @@ func (cl *Client) Login() error {
 	if ok, err := cl.IsConfigured(); !ok {
 		return err
 	}
-	if !cl.Credentials.HasPassword() && !cl.Credentials.HasKeytab() && !cl.Credentials.HasNTHash() && !cl.Credentials.HasAESKey() {
+	if !cl.Credentials.HasPassword() && !cl.Credentials.HasKeytab() && !cl.Credentials.HasNTHash() && !cl.Credentials.HasAESKey() && !cl.Credentials.HasPFX() {
 		_, endTime, _, _, err := cl.sessionTimes(cl.Credentials.Domain())
 		if err != nil {
 			return krberror.Errorf(err, krberror.KRBMsgError, "no user credentials available and error getting any existing session")
@@ -660,10 +683,10 @@ func (cl *Client) SaveSPNToCCache(ccache *credentials.CCache, clientPrincipal ty
 	principal := credentials.NewPrincipal(clientPrincipal, clientRealm)
 
 	parts := strings.Split(spn, "/")
-	if len(parts) != 2 {
-		return fmt.Errorf("Invalid SPN!")
-	}
 	if strings.EqualFold(parts[0], "krbtgt") {
+		if len(parts) != 2 {
+			return fmt.Errorf("Invalid SPN for krbtgt: expected krbtgt/REALM")
+		}
 		var tgt messages.Ticket
 		var sessionKey types.EncryptionKey
 		var flags asn1.BitString
@@ -711,9 +734,10 @@ func (cl *Client) SaveSPNToCCache(ccache *credentials.CCache, clientPrincipal ty
 			newSPN := ""
 			if strings.Contains(altService, "/") {
 				newSPN = altService
-			} else {
-				// Assume that the SPN is verified to be valid and contains a /
+			} else if len(parts) > 1 {
 				newSPN = altService + "/" + parts[1]
+			} else {
+				newSPN = altService
 			}
 			// Replace Sname in ticket for spn
 			server.PrincipalName = types.NewPrincipalName(nametype.KRB_NT_SRV_INST, newSPN)

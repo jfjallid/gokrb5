@@ -30,6 +30,8 @@ type Credentials struct {
 	nthash          []byte
 	aeskey          []byte
 	password        string
+	pfxData         []byte
+	pfxPass         string
 	attributes      map[string]interface{}
 	validUntil      time.Time
 	authenticated   bool
@@ -50,6 +52,7 @@ type marshalCredentials struct {
 	NTHash          bool
 	AESKey          bool
 	Password        bool
+	PFX             bool
 	Attributes      map[string]interface{} `json:"-"`
 	ValidUntil      time.Time
 	Authenticated   bool
@@ -178,6 +181,29 @@ func (c *Credentials) HasAESKey() bool {
 		return true
 	}
 	return false
+}
+
+// WithPFX sets the PFX data and password in the Credentials struct for PKINIT authentication.
+func (c *Credentials) WithPFX(pfxData []byte, pfxPass string) *Credentials {
+	c.pfxData = pfxData
+	c.pfxPass = pfxPass
+	c.keytab = keytab.New() // clear any keytab
+	return c
+}
+
+// PFXData returns the credential's PFX file data.
+func (c *Credentials) PFXData() []byte {
+	return c.pfxData
+}
+
+// PFXPass returns the credential's PFX password.
+func (c *Credentials) PFXPass() string {
+	return c.pfxPass
+}
+
+// HasPFX queries if the Credentials has PFX data defined for PKINIT.
+func (c *Credentials) HasPFX() bool {
+	return c.pfxData != nil && len(c.pfxData) > 0
 }
 
 // SetValidUntil sets the expiry time of the credentials
@@ -388,6 +414,7 @@ func (c *Credentials) Marshal() ([]byte, error) {
 		Password:        c.HasPassword(),
 		NTHash:          c.HasNTHash(),
 		AESKey:          c.HasAESKey(),
+		PFX:             c.HasPFX(),
 		Attributes:      c.attributes,
 		ValidUntil:      c.validUntil,
 		Authenticated:   c.authenticated,
@@ -439,6 +466,7 @@ func (c *Credentials) JSON() (string, error) {
 		Password:      c.HasPassword(),
 		NTHash:        c.HasNTHash(),
 		AESKey:        c.HasAESKey(),
+		PFX:           c.HasPFX(),
 		ValidUntil:    c.validUntil,
 		Authenticated: c.authenticated,
 		Human:         c.human,

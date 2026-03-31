@@ -2,7 +2,6 @@ package pac
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -26,6 +25,9 @@ type NTLMSupplementalCred struct {
 }
 
 // Unmarshal converts the bytes provided into a NTLMSupplementalCred.
+// Per MS-PAC 2.6.3, LmPassword and NtPassword are fixed 16-byte arrays
+// always present on the wire. The Flags field indicates whether they
+// contain valid values, not whether they are present.
 func (c *NTLMSupplementalCred) Unmarshal(b []byte) (err error) {
 	r := mstypes.NewReader(bytes.NewReader(b))
 	c.Version, err = r.Uint32()
@@ -40,33 +42,32 @@ func (c *NTLMSupplementalCred) Unmarshal(b []byte) (err error) {
 	if err != nil {
 		return
 	}
-	if isFlagSet(c.Flags, NTLMSupCredLMOWF) {
-		c.LMPassword, err = r.ReadBytes(16)
-		if err != nil {
-			return
-		}
+	c.LMPassword, err = r.ReadBytes(16)
+	if err != nil {
+		return
 	}
-	if isFlagSet(c.Flags, NTLMSupCredNTOWF) {
-		c.NTPassword, err = r.ReadBytes(16)
-		if err != nil {
-			return
-		}
+	if !isFlagSet(c.Flags, NTLMSupCredLMOWF) {
+		// If flag is not set we should ignore the field
+		c.LMPassword = nil
+	}
+	c.NTPassword, err = r.ReadBytes(16)
+	if err != nil {
+		return
+	}
+	if !isFlagSet(c.Flags, NTLMSupCredNTOWF) {
+		// If flag is not set we should ignore the field
+		c.NTPassword = nil
 	}
 	return
 }
 
-// isFlagSet tests if a flag is set in the uint32 little endian flag
+// isFlagSet tests if a flag bit is set in a uint32 using MS bit numbering
+// (bit 0 = MSB, bit 31 = LSB). For example, bit 30 corresponds to integer value 2.
 func isFlagSet(f uint32, i uint32) bool {
-	//Which byte?
-	b := int(i / 8)
-	//Which bit in byte
-	p := uint(7 - (int(i) - 8*b))
-	fb := make([]byte, 4)
-	binary.LittleEndian.PutUint32(fb, f)
-	if fb[b]&(1<<p) != 0 {
-		return true
+	if i > 31 {
+		return false
 	}
-	return false
+	return f&(1<<(31-i)) != 0
 }
 
 // SECPKGSupplementalCred implements https://msdn.microsoft.com/en-us/library/cc237956.aspx

@@ -8,4 +8,5 @@ require (
 	github.com/jfjallid/ndr v0.0.0-20250515143046-14ad19ef61a6
 	golang.org/x/crypto v0.37.0
 	golang.org/x/net v0.39.0
+	software.sslmate.com/src/go-pkcs12 v0.7.0
 )
