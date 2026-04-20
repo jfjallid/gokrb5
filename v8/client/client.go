@@ -30,7 +30,7 @@ type Client struct {
 	settings         *Settings
 	sessions         *sessions
 	cache            *Cache
-	pkInitClient     interface{}        // *pkinit.PKINITClient, set during PKINIT AS exchange
+	pkInitClient     interface{}          // *pkinit.PKINITClient, set during PKINIT AS exchange
 	pkInitDerivedKey *types.EncryptionKey // DH-derived key from PKINIT, needed for PAC credential decryption
 }
 
@@ -193,6 +193,11 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		NameType:   nametype.KRB_NT_SRV_INST,
 		NameString: []string{"krbtgt", c.DefaultPrincipal.Realm},
 	}
+	// Second krbSpn to consider when the first spn is using DNS name but TGT is for netbios name
+	krbSpn2 := types.PrincipalName{
+		NameType:   nametype.KRB_NT_SRV_INST,
+		NameString: []string{"krbtgt", strings.Split(c.DefaultPrincipal.Realm, ".")[0]},
+	}
 	/*
 		A ccache could contain a TGT for our realm, a service ticket for our realm,
 		a referral ticket e.g., a service ticket for another realms krbtgt service,
@@ -231,6 +236,10 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		}
 	}
 	cred, foundTGT := c.GetEntry(krbSpn)
+	if !foundTGT {
+		// Check for TGT with netbios name
+		cred, foundTGT = c.GetEntry(krbSpn2)
+	}
 	if !foundTGT && !foundST && !foundReferralTGT && !foundOtherReferralTicket {
 		return cl, errors.New("No usable TGT or ST found in CCache")
 	}
