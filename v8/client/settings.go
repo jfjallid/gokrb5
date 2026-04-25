@@ -3,7 +3,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	log2 "log"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -15,7 +15,7 @@ type Settings struct {
 	assumePreAuthentication bool
 	requestPAPac            bool
 	preAuthEType            int32
-	logger                  *log.Logger
+	logger                  *log2.Logger
 	proxyDialer             proxy.Dialer
 	dialTimout              time.Duration
 }
@@ -68,14 +68,14 @@ func (s *Settings) AssumePreAuthentication() bool {
 // Logger used to configure client with a logger.
 //
 // s := NewSettings(kt, Logger(l))
-func Logger(l *log.Logger) func(*Settings) {
+func Logger(l *log2.Logger) func(*Settings) {
 	return func(s *Settings) {
 		s.logger = l
 	}
 }
 
 // Logger returns the client logger instance.
-func (s *Settings) Logger() *log.Logger {
+func (s *Settings) Logger() *log2.Logger {
 	return s.logger
 }
 

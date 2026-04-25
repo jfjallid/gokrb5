@@ -21,7 +21,11 @@ import (
 	"github.com/jfjallid/gokrb5/v8/krberror"
 	"github.com/jfjallid/gokrb5/v8/messages"
 	"github.com/jfjallid/gokrb5/v8/types"
+	"github.com/jfjallid/golog"
 )
+
+// TODO Move away from the logger in Client.settings so we can log without a client
+var log = golog.Get("github.com/jfjallid/gokrb5/v8")
 
 // Client side configuration and state.
 type Client struct {
@@ -30,7 +34,7 @@ type Client struct {
 	settings         *Settings
 	sessions         *sessions
 	cache            *Cache
-	pkInitClient     interface{}          // *pkinit.PKINITClient, set during PKINIT AS exchange
+	pkInitClient     any                  // *pkinit.PKINITClient, set during PKINIT AS exchange
 	pkInitDerivedKey *types.EncryptionKey // DH-derived key from PKINIT, needed for PAC credential decryption
 }
 
@@ -43,7 +47,7 @@ func (cl *Client) PKINITDerivedKey() *types.EncryptionKey {
 
 // NewWithPassword creates a new client from a password credential.
 // Set the realm to empty string to use the default realm from config.
-func NewWithPassword(username, realm, password string, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+func NewWithPassword(username, realm, password string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
 	return &Client{
 		Credentials: creds.WithPassword(password),
@@ -53,11 +57,11 @@ func NewWithPassword(username, realm, password string, krb5conf *config.Config, 
 			Entries: make(map[string]*session),
 		},
 		cache: NewCache(),
-	}
+	}, nil
 }
 
 // NewWithHash creates a new client from an NT Hash.
-func NewWithHash(username, realm string, hash []byte, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+func NewWithHash(username, realm string, hash []byte, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
 	c := &Client{
 		Config:   krb5conf,
@@ -70,15 +74,14 @@ func NewWithHash(username, realm string, hash []byte, krb5conf *config.Config, s
 	if len(hash) == 16 {
 		c.Credentials = creds.WithNTHash(hash)
 	} else {
-		fmt.Printf("Invalid Hash provided for new client\n")
-		return nil
+		return nil, fmt.Errorf("invalid hash provided for new client")
 	}
 
-	return c
+	return c, nil
 }
 
 // NewWithKey creates a new client from a user's AES Key 128/256 bit.
-func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
 	c := &Client{
 		Config:   krb5conf,
@@ -89,17 +92,17 @@ func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, set
 		cache: NewCache(),
 	}
 	if len(key) != 16 && len(key) != 32 {
-		fmt.Printf("Invalid AES key provided for new client\n")
-		return nil
+		log.Debugf("Invalid AES key length of %d bytes\n", len(key))
+		return nil, fmt.Errorf("invalid AES key provided for new client")
 	} else {
 		c.Credentials = creds.WithAESKey(key)
 	}
 
-	return c
+	return c, nil
 }
 
 // NewWithPFX creates a new client from a PFX (PKCS#12) certificate file for PKINIT authentication.
-func NewWithPFX(username, realm string, pfxData []byte, pfxPass string, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+func NewWithPFX(username, realm string, pfxData []byte, pfxPass string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
 	return &Client{
 		Credentials: creds.WithPFX(pfxData, pfxPass),
@@ -109,11 +112,11 @@ func NewWithPFX(username, realm string, pfxData []byte, pfxPass string, krb5conf
 			Entries: make(map[string]*session),
 		},
 		cache: NewCache(),
-	}
+	}, nil
 }
 
 // NewWithKeytab creates a new client from a keytab credential.
-func NewWithKeytab(username, realm string, kt *keytab.Keytab, krb5conf *config.Config, settings ...func(*Settings)) *Client {
+func NewWithKeytab(username, realm string, kt *keytab.Keytab, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
 	return &Client{
 		Credentials: creds.WithKeytab(kt),
@@ -123,15 +126,38 @@ func NewWithKeytab(username, realm string, kt *keytab.Keytab, krb5conf *config.C
 			Entries: make(map[string]*session),
 		},
 		cache: NewCache(),
-	}
+	}, nil
 }
 
 // NewFromCCache create a client from a populated client cache.
 //
 // WARNING: A client created from CCache does not automatically renew TGTs and a failure will occur after the TGT expires.
 func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
+	var targets [][]string
+	if target != nil {
+		targets = [][]string{target}
+	}
+	cl, _, err := NewFromCCacheWithFallbacks(c, targets, krb5conf, settings...)
+	return cl, err
+}
+
+// NewFromCCacheWithFallbacks creates a client from a populated ccache, trying each
+// target SPN in order and using the first one with a matching cached service ticket.
+// This supports callers that accept multiple equivalent SPNs — e.g. AD's sPNMappings
+// where a cached "host/<target>" ticket can satisfy a request for "cifs/<target>",
+// "ldap/<target>", etc.
+//
+// All targets must share the same hostname (target[1]); only the service prefix
+// should differ. Referral-ticket handling uses targets[0] as the reference.
+//
+// Returns the matched target (nil if no service ticket matched but the client was
+// successfully created from a TGT or referral ticket) alongside the client.
+//
+// WARNING: A client created from CCache does not automatically renew TGTs and a failure will occur after the TGT expires.
+func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, []string, error) {
 	var err error
 	var foundST, foundTGT, foundReferralTGT, foundOtherReferralTicket bool
+	var matchedTarget []string
 	var krbReferralSpn types.PrincipalName
 	cl := &Client{
 		Credentials: c.GetClientCredentials(),
@@ -142,27 +168,42 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		},
 		cache: NewCache(),
 	}
-	// Check if we are targeting a referral ticket, and if it already exists in the ccache.
-	if target != nil && len(target) < 2 {
-		return nil, fmt.Errorf("Invalid SPN. A SPN must contain a service and a FQDN or Netbios name")
+
+	// Fallback handling requires at least 2 part SPNs, but primary SPNs could be of another format
+	if len(targets) > 1 {
+		// Validate every fallback candidate target up front.
+		for _, t := range targets[1:] {
+			if len(t) < 2 {
+				return nil, nil, fmt.Errorf("invalid fallback SPN. A SPN must contain a service and a FQDN or Netbios name")
+			}
+		}
 	}
-	if target != nil {
-		if strings.EqualFold(target[0], "krbtgt") {
-			if !strings.EqualFold(c.DefaultPrincipal.Realm, target[1]) {
+	// Use targets[0] as the reference for referral-ticket lookup (all candidates
+	// share the same hostname — only the service prefix differs).
+	var referenceTarget []string
+	if len(targets) > 0 {
+		referenceTarget = targets[0]
+	}
+	// Check if we are targeting a referral ticket, and if it already exists in the ccache.
+	if referenceTarget != nil {
+		if strings.EqualFold(referenceTarget[0], "krbtgt") {
+			if !strings.EqualFold(c.DefaultPrincipal.Realm, referenceTarget[1]) {
 				// Target realm is not same as client realm so we need a referral ticket
 				krbReferralSpn = types.PrincipalName{
 					NameType:   nametype.KRB_NT_SRV_INST,
-					NameString: []string{"krbtgt", strings.ToUpper(target[1])},
+					NameString: []string{"krbtgt", strings.ToUpper(referenceTarget[1])},
 				}
+				log.Debugf("Trying to find a referral ticket for krbtgt/%s\n", krbReferralSpn.NameString[1])
 			}
 		} else {
-			parts := strings.SplitN(target[1], ".", 2)
+			parts := strings.SplitN(referenceTarget[1], ".", 2)
 			// When we are targeting a cross-realm SPN, check if we already have a referral ticket
 			if len(parts) > 1 && !strings.EqualFold(c.DefaultPrincipal.Realm, parts[1]) {
 				krbReferralSpn = types.PrincipalName{
 					NameType:   nametype.KRB_NT_SRV_INST,
 					NameString: []string{"krbtgt", strings.ToUpper(parts[1])},
 				}
+				log.Debugf("Trying to find a referral ticket for krbtgt/%s\n", krbReferralSpn.NameString[1])
 			}
 		}
 		var credReferral *credentials.Credential
@@ -172,7 +213,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 				var tgt messages.Ticket
 				err = tgt.Unmarshal(credReferral.Ticket)
 				if err != nil {
-					return cl, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
+					return cl, nil, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
 				}
 				referralRealm := credReferral.Server.PrincipalName.NameString[1]
 				cl.sessions.Entries[referralRealm] = &session{
@@ -185,6 +226,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 					flags:      credReferral.TicketFlags,
 					cAddr:      credReferral.Addresses,
 				}
+				log.Debugf("Found referral TGT in ccache and adding it to the session for realm: %s\n", referralRealm)
 			}
 		}
 	}
@@ -206,12 +248,18 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		For a service ticket for another realm, the fqdn in the realm will include
 		a hostname.
 	*/
-	if len(target) == 2 {
+	// Walk candidate targets and stop at the first cached service ticket.
+	for _, t := range targets {
 		spn := types.PrincipalName{
 			NameType:   nametype.KRB_NT_SRV_INST,
-			NameString: target,
+			NameString: t,
 		}
-		_, foundST = c.GetEntry(spn)
+		if _, ok := c.GetEntry(spn); ok {
+			foundST = true
+			matchedTarget = t
+			log.Debugf("Found service ticket for %v\n", matchedTarget)
+			break
+		}
 	}
 	// Load all referral tickets (krbtgt for foreign realms) as sessions
 	for _, cred := range c.GetEntries() {
@@ -220,7 +268,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 			var tgt messages.Ticket
 			err = tgt.Unmarshal(cred.Ticket)
 			if err != nil {
-				return cl, fmt.Errorf("Referral ticket bytes in cache are not valid: %v", err)
+				return cl, nil, fmt.Errorf("Referral ticket bytes in cache are not valid: %v", err)
 			}
 			referralRealm := cred.Server.PrincipalName.NameString[1]
 			cl.sessions.Entries[referralRealm] = &session{
@@ -233,6 +281,7 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 				flags:      cred.TicketFlags,
 				cAddr:      cred.Addresses,
 			}
+			log.Debugf("Adding TGT to session for realm: %s\n", referralRealm)
 		}
 	}
 	cred, foundTGT := c.GetEntry(krbSpn)
@@ -241,13 +290,13 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 		cred, foundTGT = c.GetEntry(krbSpn2)
 	}
 	if !foundTGT && !foundST && !foundReferralTGT && !foundOtherReferralTicket {
-		return cl, errors.New("No usable TGT or ST found in CCache")
+		return cl, nil, errors.New("No usable TGT or ST found in CCache")
 	}
 	if foundTGT {
 		var tgt messages.Ticket
 		err = tgt.Unmarshal(cred.Ticket)
 		if err != nil {
-			return cl, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
+			return cl, nil, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
 		}
 		cl.sessions.Entries[c.DefaultPrincipal.Realm] = &session{
 			realm:      c.DefaultPrincipal.Realm,
@@ -259,12 +308,13 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 			flags:      cred.TicketFlags,
 			cAddr:      cred.Addresses,
 		}
+		log.Debugf("Adding TGT to session for default realm: %s\n", c.DefaultPrincipal.Realm)
 	}
 	for _, cred := range c.GetEntries() {
 		var tkt messages.Ticket
 		err = tkt.Unmarshal(cred.Ticket)
 		if err != nil {
-			return cl, fmt.Errorf("cache entry ticket bytes are not valid: %v", err)
+			return cl, nil, fmt.Errorf("cache entry ticket bytes are not valid: %v", err)
 		}
 		cl.cache.addEntry(
 			tkt,
@@ -275,8 +325,9 @@ func NewFromCCache(c *credentials.CCache, target []string, krb5conf *config.Conf
 			cred.Key,
 			cred.TicketFlags,
 		)
+		log.Debugf("Adding service ticket to session for SPN: %s\n", cred.Server.PrincipalName.PrincipalNameString())
 	}
-	return cl, nil
+	return cl, matchedTarget, nil
 }
 
 func NewFromTicket(c *credentials.Credential, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
