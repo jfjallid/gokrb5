@@ -87,6 +87,7 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 		tgsRep.DecryptedEncPart.Key,
 		tgsRep.DecryptedEncPart.Flags,
 	)
+	log.Debugf("ticket added to cache for %s (EndTime: %v)\n", tgsRep.Ticket.SName.PrincipalNameString(), tgsRep.DecryptedEncPart.EndTime)
 	cl.Log("ticket added to cache for %s (EndTime: %v)", tgsRep.Ticket.SName.PrincipalNameString(), tgsRep.DecryptedEncPart.EndTime)
 	return tgsReq, tgsRep, err
 }
@@ -101,7 +102,9 @@ func (cl *Client) GetServiceTicket(spn string) (messages.Ticket, types.Encryptio
 func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, types.EncryptionKey, error) {
 	var tkt messages.Ticket
 	var skey types.EncryptionKey
+	log.Debugf("Getting a service ticket for SPN: %s", spn)
 	if tkt, skey, ok := cl.GetCachedTicket(spn); ok {
+		log.Debugf("Found ticket in cache for SPN: %s", spn)
 		// Already a valid ticket in the cache
 		return tkt, skey, nil
 	}

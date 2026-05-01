@@ -107,7 +107,7 @@ func (cl *Client) addSession(tgt messages.Ticket, dep messages.EncKDCRepPart) {
 	cl.sessions.update(s)
 	cl.enableAutoSessionRenewal(s)
 	cl.Log("TGT session added for %s (EndTime: %v)", realm, dep.EndTime)
-
+	log.Debugf("TGT session added for %s (EndTime: %v)\n", realm, dep.EndTime)
 }
 
 // update overwrites the session details with those from the TGT and decrypted encPart

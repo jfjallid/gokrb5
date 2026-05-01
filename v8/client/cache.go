@@ -124,6 +124,7 @@ func (cl *Client) GetCachedTicket(spn string) (messages.Ticket, types.Encryption
 			}
 			return e.Ticket, e.SessionKey, true
 		}
+		log.Debugf("cached ticket does not match validity time. Now: %s cache starttime: %s, endtime: %s, renewtill: %s\n", time.Now().UTC(), e.StartTime, e.EndTime, e.RenewTill)
 	}
 	var tkt messages.Ticket
 	var key types.EncryptionKey
