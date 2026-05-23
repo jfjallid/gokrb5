@@ -16,6 +16,14 @@ import (
 
 // SendToKDC performs network actions to send data to the KDC.
 func (cl *Client) sendToKDC(b []byte, realm string) ([]byte, error) {
+	// Resolve through the client's runtime alias table before dialing.
+	// This catches per-client aliases learned at runtime (CCache load,
+	// TGS referral) that Config.RealmAliases doesn't know about, and it
+	// folds onto whatever canonical form c.Realms uses. GetKDCs has its
+	// own Config-level alias fallback for callers outside a Client.
+	if cl.aliases != nil {
+		realm = cl.aliases.Resolve(realm)
+	}
 	var rb []byte
 	if cl.Config.LibDefaults.UDPPreferenceLimit == 1 {
 		//1 means we should always use TCP

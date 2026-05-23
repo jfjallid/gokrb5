@@ -25,7 +25,7 @@ import (
 )
 
 // TODO Move away from the logger in Client.settings so we can log without a client
-var log = golog.Get("github.com/jfjallid/gokrb5/v8")
+var log = golog.Get("github.com/jfjallid/gokrb5/v8").SetDisplayName("gokrb5")
 
 // Client side configuration and state.
 type Client struct {
@@ -34,8 +34,22 @@ type Client struct {
 	settings         *Settings
 	sessions         *sessions
 	cache            *Cache
+	aliases          *config.RealmAliases // runtime-learned realm-name equivalences, per-client to avoid cross-client pollution when a Config is shared
 	pkInitClient     any                  // *pkinit.PKINITClient, set during PKINIT AS exchange
 	pkInitDerivedKey *types.EncryptionKey // DH-derived key from PKINIT, needed for PAC credential decryption
+}
+
+// newClientAliases returns a per-client alias table seeded from the static
+// aliases declared in the Config's [realm_aliases] section. The seed is a
+// snapshot: later mutations to the Config's table do not propagate, and
+// runtime additions stay scoped to one client. Safe to call with a nil
+// Config.
+func newClientAliases(cfg *config.Config) *config.RealmAliases {
+	a := config.NewRealmAliases()
+	if cfg != nil && cfg.RealmAliases != nil {
+		a.AddAll(cfg.RealmAliases)
+	}
+	return a
 }
 
 // PKINITDerivedKey returns the DH-derived key from PKINIT authentication.
@@ -49,27 +63,33 @@ func (cl *Client) PKINITDerivedKey() *types.EncryptionKey {
 // Set the realm to empty string to use the default realm from config.
 func NewWithPassword(username, realm, password string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
+	aliases := newClientAliases(krb5conf)
 	return &Client{
 		Credentials: creds.WithPassword(password),
 		Config:      krb5conf,
 		settings:    NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}, nil
 }
 
 // NewWithHash creates a new client from an NT Hash.
 func NewWithHash(username, realm string, hash []byte, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
+	aliases := newClientAliases(krb5conf)
 	c := &Client{
 		Config:   krb5conf,
 		settings: NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}
 	if len(hash) == 16 {
 		c.Credentials = creds.WithNTHash(hash)
@@ -81,22 +101,37 @@ func NewWithHash(username, realm string, hash []byte, krb5conf *config.Config, s
 }
 
 // NewWithKey creates a new client from a user's AES Key 128/256 bit.
+// The etype is inferred from the key length and assumes the RFC 3962 SHA-1
+// variants (aes128-cts-hmac-sha1-96 / aes256-cts-hmac-sha1-96). For RFC 8009
+// SHA-2 keys use NewWithKeyEtype since those cannot be distinguished from the
+// SHA-1 variants by key length alone.
 func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
+	return NewWithKeyEtype(username, realm, key, 0, krb5conf, settings...)
+}
+
+// NewWithKeyEtype creates a new client from a user's AES Key together with the
+// etype id the key belongs to. Use this for the RFC 8009 SHA-2 variants
+// (aes128-cts-hmac-sha256-128 / aes256-cts-hmac-sha384-192), which share key
+// lengths with their RFC 3962 SHA-1 counterparts and so cannot be inferred
+// from length alone.
+func NewWithKeyEtype(username, realm string, key []byte, eid int32, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
+	aliases := newClientAliases(krb5conf)
 	c := &Client{
 		Config:   krb5conf,
 		settings: NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}
 	if len(key) != 16 && len(key) != 32 {
 		log.Debugf("Invalid AES key length of %d bytes\n", len(key))
 		return nil, fmt.Errorf("invalid AES key provided for new client")
-	} else {
-		c.Credentials = creds.WithAESKey(key)
 	}
+	c.Credentials = creds.WithAESKeyEtype(key, eid)
 
 	return c, nil
 }
@@ -104,28 +139,34 @@ func NewWithKey(username, realm string, key []byte, krb5conf *config.Config, set
 // NewWithPFX creates a new client from a PFX (PKCS#12) certificate file for PKINIT authentication.
 func NewWithPFX(username, realm string, pfxData []byte, pfxPass string, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
+	aliases := newClientAliases(krb5conf)
 	return &Client{
 		Credentials: creds.WithPFX(pfxData, pfxPass),
 		Config:      krb5conf,
 		settings:    NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}, nil
 }
 
 // NewWithKeytab creates a new client from a keytab credential.
 func NewWithKeytab(username, realm string, kt *keytab.Keytab, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
 	creds := credentials.New(username, realm)
+	aliases := newClientAliases(krb5conf)
 	return &Client{
 		Credentials: creds.WithKeytab(kt),
 		Config:      krb5conf,
 		settings:    NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}, nil
 }
 
@@ -159,14 +200,17 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 	var foundST, foundTGT, foundReferralTGT, foundOtherReferralTicket bool
 	var matchedTarget []string
 	var krbReferralSpn types.PrincipalName
+	aliases := newClientAliases(krb5conf)
 	cl := &Client{
 		Credentials: c.GetClientCredentials(),
 		Config:      krb5conf,
 		settings:    NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}
 
 	// Fallback handling requires at least 2 part SPNs, but primary SPNs could be of another format
@@ -216,7 +260,7 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 					return cl, nil, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
 				}
 				referralRealm := credReferral.Server.PrincipalName.NameString[1]
-				cl.sessions.Entries[referralRealm] = &session{
+				cl.sessions.update(&session{
 					realm:      referralRealm,
 					authTime:   credReferral.AuthTime,
 					endTime:    credReferral.EndTime,
@@ -225,7 +269,7 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 					sessionKey: credReferral.Key,
 					flags:      credReferral.TicketFlags,
 					cAddr:      credReferral.Addresses,
-				}
+				})
 				log.Debugf("Found referral TGT in ccache and adding it to the session for realm: %s\n", referralRealm)
 			}
 		}
@@ -234,11 +278,6 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 	krbSpn := types.PrincipalName{
 		NameType:   nametype.KRB_NT_SRV_INST,
 		NameString: []string{"krbtgt", c.DefaultPrincipal.Realm},
-	}
-	// Second krbSpn to consider when the first spn is using DNS name but TGT is for netbios name
-	krbSpn2 := types.PrincipalName{
-		NameType:   nametype.KRB_NT_SRV_INST,
-		NameString: []string{"krbtgt", strings.Split(c.DefaultPrincipal.Realm, ".")[0]},
 	}
 	/*
 		A ccache could contain a TGT for our realm, a service ticket for our realm,
@@ -271,7 +310,7 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 				return cl, nil, fmt.Errorf("Referral ticket bytes in cache are not valid: %v", err)
 			}
 			referralRealm := cred.Server.PrincipalName.NameString[1]
-			cl.sessions.Entries[referralRealm] = &session{
+			cl.sessions.update(&session{
 				realm:      referralRealm,
 				authTime:   cred.AuthTime,
 				endTime:    cred.EndTime,
@@ -280,14 +319,74 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 				sessionKey: cred.Key,
 				flags:      cred.TicketFlags,
 				cAddr:      cred.Addresses,
-			}
+			})
 			log.Debugf("Adding TGT to session for realm: %s\n", referralRealm)
 		}
 	}
+	// Locate a TGT for the principal's own realm. The lookup proceeds in
+	// three stages, each more speculative than the last:
+	//
+	//   1. Exact-string krbtgt/<DefaultPrincipal.Realm> hit — the common case.
+	//   2. Any krbtgt/<X> in the cache whose realm X is alias-equivalent to
+	//      the default principal's realm under the current alias table
+	//      (which already includes anything from the [realm_aliases] config
+	//      section). This covers BOTH directions of the DNS / NetBIOS
+	//      mismatch and any other explicitly declared equivalence.
+	//   3. As a last resort, the AD-specific "X is the first DNS label of
+	//      the principal's realm" heuristic, kept for callers who have
+	//      neither declared aliases up front nor a CCache produced by a KDC
+	//      that records both forms.
 	cred, foundTGT := c.GetEntry(krbSpn)
 	if !foundTGT {
-		// Check for TGT with netbios name
+		for _, candidate := range c.GetEntries() {
+			ns := candidate.Server.PrincipalName.NameString
+			if len(ns) < 2 || !strings.EqualFold(ns[0], "krbtgt") {
+				continue
+			}
+			if cl.IsSameRealm(ns[1], c.DefaultPrincipal.Realm) {
+				cred = candidate
+				foundTGT = true
+				log.Debugf("matched krbtgt entry by alias-equivalent realm: %q ≡ %q\n", ns[1], c.DefaultPrincipal.Realm)
+				break
+			}
+		}
+	}
+	if !foundTGT {
+		// Speculative AD-specific fallback. Try both directions of the
+		// "NetBIOS short form == first DNS label of the long form"
+		// convention. This is reached only when no exact match and no
+		// declared/learned alias produced a hit; the post-match block
+		// below records the alias once we've confirmed the entry is usable.
+
+		// (a) short-to-long: principal realm is the long form, cache uses
+		//     the short form (krbtgt/CORP for CORP.EXAMPLE.COM).
+		krbSpn2 := types.PrincipalName{
+			NameType:   nametype.KRB_NT_SRV_INST,
+			NameString: []string{"krbtgt", strings.Split(c.DefaultPrincipal.Realm, ".")[0]},
+		}
 		cred, foundTGT = c.GetEntry(krbSpn2)
+		if foundTGT {
+			log.Debugf("matched krbtgt by short-form fallback heuristic for %q\n", krbSpn2.NameString[1])
+		}
+
+		// (b) long-to-short: principal realm is the short form (no dot),
+		//     cache uses the long form. Scan for any krbtgt whose first
+		//     DNS label equals the default realm.
+		if !foundTGT && !strings.Contains(c.DefaultPrincipal.Realm, ".") {
+			for _, candidate := range c.GetEntries() {
+				ns := candidate.Server.PrincipalName.NameString
+				if len(ns) < 2 || !strings.EqualFold(ns[0], "krbtgt") {
+					continue
+				}
+				label := strings.Split(ns[1], ".")[0]
+				if strings.EqualFold(label, c.DefaultPrincipal.Realm) {
+					cred = candidate
+					foundTGT = true
+					log.Debugf("matched krbtgt by long-form fallback heuristic: %q starts with %q\n", ns[1], c.DefaultPrincipal.Realm)
+					break
+				}
+			}
+		}
 	}
 	if !foundTGT && !foundST && !foundReferralTGT && !foundOtherReferralTicket {
 		return cl, nil, errors.New("No usable TGT or ST found in CCache")
@@ -298,7 +397,18 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 		if err != nil {
 			return cl, nil, fmt.Errorf("TGT bytes in cache are not valid: %v", err)
 		}
-		cl.sessions.Entries[c.DefaultPrincipal.Realm] = &session{
+		// If the matched krbtgt entry uses a different realm name than the
+		// principal's own (typically the AD NetBIOS short form vs. the DNS
+		// long form), record the equivalence so later lookups for either
+		// form find this session. The pairing is taken from the CCache the
+		// caller provided, not synthesised from string surgery — it's the
+		// strongest evidence available at this point.
+		matchedRealm := cred.Server.PrincipalName.NameString[1]
+		if !config.EqualRealm(matchedRealm, c.DefaultPrincipal.Realm) {
+			cl.aliases.Add(matchedRealm, c.DefaultPrincipal.Realm)
+			log.Debugf("registered realm alias %q -> %q from CCache krbtgt entry\n", matchedRealm, c.DefaultPrincipal.Realm)
+		}
+		cl.sessions.update(&session{
 			realm:      c.DefaultPrincipal.Realm,
 			authTime:   cred.AuthTime,
 			endTime:    cred.EndTime,
@@ -307,7 +417,7 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 			sessionKey: cred.Key,
 			flags:      cred.TicketFlags,
 			cAddr:      cred.Addresses,
-		}
+		})
 		log.Debugf("Adding TGT to session for default realm: %s\n", c.DefaultPrincipal.Realm)
 	}
 	for _, cred := range c.GetEntries() {
@@ -331,14 +441,17 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 }
 
 func NewFromTicket(c *credentials.Credential, krb5conf *config.Config, settings ...func(*Settings)) (*Client, error) {
+	aliases := newClientAliases(krb5conf)
 	cl := &Client{
 		Credentials: credentials.New(c.Client.PrincipalName.PrincipalNameString(), c.Client.Realm),
 		Config:      krb5conf,
 		settings:    NewSettings(settings...),
 		sessions: &sessions{
 			Entries: make(map[string]*session),
+			aliases: aliases,
 		},
-		cache: NewCache(),
+		cache:   NewCache(),
+		aliases: aliases,
 	}
 	err := cl.AddTicketToSession(c, "")
 	if err != nil {
@@ -354,12 +467,16 @@ func (cl *Client) AddTicketToSession(c *credentials.Credential, realm string) er
 		return fmt.Errorf("TGT bytes in cache are not valid: %v", err)
 	}
 
-	if realm == "" {
-		realm = c.Client.Realm
+	// Route through sessions.update so the map key goes through realmKey
+	// (alias-aware canonicalisation) and the write takes the sessions mutex.
+	// The previous direct write to sessions.Entries[realm] bypassed both and
+	// raced concurrent renewals.
+	sessRealm := realm
+	if sessRealm == "" {
+		sessRealm = c.Client.Realm
 	}
-
-	cl.sessions.Entries[realm] = &session{
-		realm:      c.Client.Realm,
+	cl.sessions.update(&session{
+		realm:      sessRealm,
 		authTime:   c.AuthTime,
 		endTime:    c.EndTime,
 		renewTill:  c.RenewTill,
@@ -367,9 +484,40 @@ func (cl *Client) AddTicketToSession(c *credentials.Credential, realm string) er
 		sessionKey: c.Key,
 		flags:      c.TicketFlags,
 		cAddr:      c.Addresses,
-	}
+	})
 
 	return nil
+}
+
+// IsSameRealm reports whether two realm-name strings refer to the same realm.
+// Comparison is by canonical form (trailing dot trimmed, ASCII uppercased)
+// and consults the client's runtime alias table, so e.g. "CORP" and
+// "CORP.EXAMPLE.COM" compare equal once they have been recorded via
+// AddRealmAlias.
+//
+// All Client constructors populate cl.aliases via newClientAliases. The nil
+// branch only matters for callers that build a Client by struct literal —
+// it falls back to canonical-form equality with no alias resolution.
+func (cl *Client) IsSameRealm(a, b string) bool {
+	if cl.aliases == nil {
+		return config.EqualRealm(a, b)
+	}
+	return cl.aliases.Resolve(a) == cl.aliases.Resolve(b)
+}
+
+// AddRealmAlias records a realm-name equivalence on the client. Use this
+// when calling code knows that two strings name the same realm in the
+// deployment (most commonly a NetBIOS short name and its DNS-style long
+// name). The canonical argument is the form returned by IsSameRealm and by
+// RealmAliases().Resolve().
+func (cl *Client) AddRealmAlias(alias, canonical string) {
+	cl.aliases.Add(alias, canonical)
+}
+
+// RealmAliases returns the client's runtime alias table. It is safe for
+// concurrent use.
+func (cl *Client) RealmAliases() *config.RealmAliases {
+	return cl.aliases
 }
 
 // AddCacheEntries create populates an existing cache with new tickets
@@ -432,7 +580,9 @@ func (cl *Client) Key(et etype.EType, kvno int, krberr *messages.KRBError) (type
 		key, _, err := crypto.GetKeyFromHash(cl.Credentials.NTHash(), cl.Credentials.CName(), cl.Credentials.Domain(), et.GetETypeID(), types.PADataSequence{})
 		return key, 0, err
 	} else if cl.Credentials.HasAESKey() {
-		if len(cl.Credentials.AESKey()) == 32 {
+		if eid := cl.Credentials.AESKeyEtype(); eid != 0 {
+			et, err = crypto.GetEtype(eid)
+		} else if len(cl.Credentials.AESKey()) == 32 {
 			et, err = crypto.GetEtype(etypeID.AES256_CTS_HMAC_SHA1_96)
 		} else {
 			et, err = crypto.GetEtype(etypeID.AES128_CTS_HMAC_SHA1_96)
@@ -526,7 +676,12 @@ func (cl *Client) AffirmLogin() error {
 
 // realmLogin obtains or renews a TGT and establishes a session for the realm specified.
 func (cl *Client) realmLogin(realm string) error {
-	if realm == cl.Credentials.Domain() {
+	// Compare via the alias table: callers may pass either form of a realm
+	// that aliases the client's own (e.g. NetBIOS "CORP" vs DNS
+	// "CORP.EXAMPLE.COM"). Raw string equality here would push the
+	// alias-equivalent case down the cross-realm referral path, asking the
+	// home KDC for krbtgt/<other-form>@<home-form>.
+	if cl.IsSameRealm(realm, cl.Credentials.Domain()) {
 		return cl.Login()
 	}
 	_, endTime, _, _, err := cl.sessionTimes(cl.Credentials.Domain())
@@ -625,8 +780,7 @@ func (cl *Client) Diagnostics(w io.Writer) error {
 	if errs == nil || len(errs) < 1 {
 		return nil
 	}
-	err = fmt.Errorf(strings.Join(errs, "\n"))
-	return err
+	return errors.New(strings.Join(errs, "\n"))
 }
 
 // Print writes the details of the client to the io.Writer provided.

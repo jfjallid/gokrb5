@@ -11,13 +11,15 @@ import (
 
 // Settings holds optional client settings.
 type Settings struct {
-	disablePAFXFast         bool
-	assumePreAuthentication bool
-	requestPAPac            bool
-	preAuthEType            int32
-	logger                  *log2.Logger
-	proxyDialer             proxy.Dialer
-	dialTimout              time.Duration
+	disablePAFXFast              bool
+	assumePreAuthentication      bool
+	requestPAPac                 bool
+	preAuthEType                 int32
+	logger                       *log2.Logger
+	proxyDialer                  proxy.Dialer
+	dialTimout                   time.Duration
+	allowDomainSuffixRealmGuess  bool          // default true; preserves the legacy "strip first DNS label, use suffix as realm" guess
+	dnsRealmLookupTimeout        time.Duration // default 2s; per-host cap for [domain_realm] DNS TXT lookups
 }
 
 // jsonSettings is used when marshaling the Settings details to JSON format.
@@ -29,8 +31,10 @@ type jsonSettings struct {
 // NewSettings creates a new client settings struct.
 func NewSettings(settings ...func(*Settings)) *Settings {
 	s := new(Settings)
-	s.dialTimout = time.Second * 5 // default value
-	s.requestPAPac = true          // default value
+	s.dialTimout = time.Second * 5
+	s.requestPAPac = true
+	s.allowDomainSuffixRealmGuess = true // preserve legacy behavior unless caller opts out
+	s.dnsRealmLookupTimeout = 2 * time.Second
 	for _, set := range settings {
 		set(s)
 	}
@@ -140,4 +144,39 @@ func RequestPAPac(b bool) func(*Settings) {
 // RequestPAPac indicates that the client should request that the KDC includes a PAC
 func (s *Settings) RequestPAPac() bool {
 	return s.requestPAPac
+}
+
+// AllowDomainSuffixRealmGuess controls whether GetServiceTicket falls back
+// to the AD-flavored "strip the first DNS label of the SPN host and use the
+// remainder as the realm" heuristic when no [domain_realm] entry or alias
+// matches. Default true (preserves legacy behavior). Disable to require an
+// explicit mapping for every cross-realm SPN.
+//
+//	s := NewSettings(AllowDomainSuffixRealmGuess(false))
+func AllowDomainSuffixRealmGuess(b bool) func(*Settings) {
+	return func(s *Settings) {
+		s.allowDomainSuffixRealmGuess = b
+	}
+}
+
+// AllowDomainSuffixRealmGuess reports whether the suffix-strip realm guess
+// is enabled.
+func (s *Settings) AllowDomainSuffixRealmGuess() bool {
+	return s.allowDomainSuffixRealmGuess
+}
+
+// DNSRealmLookupTimeout sets the per-host cap on DNS TXT lookups used to
+// resolve a hostname's realm. Only consulted when the Config has
+// DNSLookupRealm enabled. Default 2 seconds.
+//
+//	s := NewSettings(DNSRealmLookupTimeout(5 * time.Second))
+func DNSRealmLookupTimeout(d time.Duration) func(*Settings) {
+	return func(s *Settings) {
+		s.dnsRealmLookupTimeout = d
+	}
+}
+
+// DNSRealmLookupTimeout returns the DNS TXT lookup timeout.
+func (s *Settings) DNSRealmLookupTimeout() time.Duration {
+	return s.dnsRealmLookupTimeout
 }

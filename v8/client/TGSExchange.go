@@ -1,8 +1,12 @@
 package client
 
 import (
+	"context"
+	"net"
 	"strings"
+	"time"
 
+	"github.com/jfjallid/gokrb5/v8/config"
 	"github.com/jfjallid/gokrb5/v8/iana/flags"
 	"github.com/jfjallid/gokrb5/v8/iana/nametype"
 	"github.com/jfjallid/gokrb5/v8/krberror"
@@ -65,6 +69,21 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 			tgsRep.DecryptedEncPart.Flags,
 		)
 		realm := tgsRep.Ticket.SName.NameString[len(tgsRep.Ticket.SName.NameString)-1]
+		// Form-normalisation aliases: if we requested a krbtgt for realm
+		// form A and the KDC handed us a krbtgt for form B (request SName
+		// and response SName both krbtgt, with differing realm portions),
+		// the KDC is telling us A and B name the same realm. Record the
+		// equivalence so subsequent lookups in either form hit the same
+		// session. Genuine cross-realm referrals (SPN -> krbtgt) are
+		// excluded by the krbtgt-on-both-sides check.
+		if len(tgsReq.ReqBody.SName.NameString) >= 2 &&
+			strings.EqualFold(tgsReq.ReqBody.SName.NameString[0], "krbtgt") {
+			reqRealm := tgsReq.ReqBody.SName.NameString[1]
+			if !config.EqualRealm(reqRealm, realm) {
+				cl.AddRealmAlias(reqRealm, realm)
+				log.Debugf("registered realm alias from TGS referral: %q -> %q\n", reqRealm, realm)
+			}
+		}
 		referral++
 		if types.IsFlagSet(&tgsReq.ReqBody.KDCOptions, flags.EncTktInSkey) && len(tgsReq.ReqBody.AdditionalTickets) > 0 {
 			tgsReq, err = messages.NewUser2UserTGSReq(cl.Credentials.CName(), kdcRealm, cl.Config, tgt, sessionKey, tgsReq.ReqBody.SName, tgsReq.Renewal, tgsReq.ReqBody.AdditionalTickets[0])
@@ -117,47 +136,8 @@ func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, ty
 		serverSPNType = nametype.KRB_NT_ENTERPRISE
 	}
 
-	/*
-		use dcDomain to manually force which realm to use?
-		in some cases we want to specify the realm to use for retrieving a TGT from the session.
-		Particularly useful in hybrid AD scenarios.
-
-	*/
-	// Check if cross realm
-	var realm string
-	if dcDomain != "" {
-		realm = dcDomain
-	}
-	if realm == "" {
-		parts := strings.Split(spn, "/")
-		if len(parts) > 1 {
-			// Seems to be NT_SRV_INST SPN so let's check which service is targeted
-			if strings.ToLower(parts[0]) == "krbtgt" {
-				realm = strings.ToUpper(parts[1])
-			} else if strings.Contains(parts[1], ".") {
-				// Is this relavant?
-				// Strip away host name if it is a FQDN
-				parts = strings.SplitN(parts[1], ".", 2)
-				realm = strings.ToUpper(parts[1])
-			}
-		}
-	}
-	// Handle a more advanced scenario where a referral ticket is required for communication
-	// with another kerberos realm/domain
-	if realm == "" && dcDomain != "" && !strings.EqualFold(cl.Credentials.Realm(), dcDomain) {
-		// If client realm is not same as DC Realm we should look for a referral ticket and not for a TGT
-		realm = dcDomain
-	}
-
 	princ := types.NewPrincipalName(serverSPNType, spn)
-	if realm == "" {
-		realm = cl.spnRealm(princ)
-	}
-
-	// if we don't know the SPN's realm, ask the client realm's KDC
-	if realm == "" {
-		realm = cl.Credentials.Realm()
-	}
+	realm := cl.resolveTargetRealm(spn, dcDomain)
 
 	tgt, skey, err := cl.sessionTGT(realm)
 	if err != nil {
@@ -173,3 +153,103 @@ func (cl *Client) GetServiceTicketExt(spn, dcDomain string) (messages.Ticket, ty
 	}
 	return tgsRep.Ticket, tgsRep.DecryptedEncPart.Key, nil
 }
+
+// resolveTargetRealm picks the realm to use when requesting a service
+// ticket for spn. The chain proceeds from least-speculative to most:
+//
+//  1. an explicit dcDomain override (caller knows best);
+//  2. for a krbtgt/<R> SPN, the realm is R by definition;
+//  3. an entry in the Config's [domain_realm] map for the SPN host or a
+//     parent DNS zone (the static, intentional configuration path);
+//  4. when Config.LibDefaults.DNSLookupRealm is true, a DNS TXT lookup of
+//     _kerberos.<host> walking up the host suffix;
+//  5. (legacy) the AD-flavored guess that strips the first DNS label of
+//     the host and uses the remainder as the realm — gated by the
+//     AllowDomainSuffixRealmGuess setting (default on for back-compat);
+//  6. the client's own realm as last resort.
+//
+// Each successful step is logged at debug level so misconfigurations are
+// diagnosable from logs.
+func (cl *Client) resolveTargetRealm(spn, dcDomain string) string {
+	if dcDomain != "" {
+		log.Debugf("realm resolution for %q: using explicit dcDomain %q\n", spn, dcDomain)
+		return dcDomain
+	}
+
+	parts := strings.Split(spn, "/")
+	if len(parts) > 1 && strings.EqualFold(parts[0], "krbtgt") {
+		r := strings.ToUpper(parts[1])
+		log.Debugf("realm resolution for %q: krbtgt SPN, realm is %q\n", spn, r)
+		return r
+	}
+
+	var host string
+	if len(parts) > 1 {
+		host = parts[1]
+	} else {
+		host = spn
+	}
+
+	if r := cl.Config.ResolveRealm(host); r != "" {
+		log.Debugf("realm resolution for %q: [domain_realm] entry -> %q\n", spn, r)
+		return r
+	}
+
+	if cl.Config.LibDefaults.DNSLookupRealm {
+		if r := cl.lookupRealmDNS(host); r != "" {
+			log.Debugf("realm resolution for %q: DNS TXT lookup -> %q\n", spn, r)
+			return r
+		}
+	}
+
+	if cl.settings.AllowDomainSuffixRealmGuess() {
+		if i := strings.Index(host, "."); i > 0 && i < len(host)-1 {
+			r := strings.ToUpper(host[i+1:])
+			log.Debugf("realm resolution for %q: suffix-strip heuristic -> %q\n", spn, r)
+			return r
+		}
+	}
+
+	r := cl.Credentials.Realm()
+	log.Debugf("realm resolution for %q: no match, falling back to client realm %q\n", spn, r)
+	return r
+}
+
+// lookupRealmDNS resolves a host to a realm via TXT records, walking up the
+// host suffix in the same order MIT krb5 does: _kerberos.<host>, then
+// _kerberos.<parent>, etc. Returns empty on miss or on any DNS error.
+//
+// SECURITY: TXT records are unauthenticated DNS data. A spoofed response
+// can redirect the client to an attacker-controlled realm. This path is
+// only reached when Config.LibDefaults.DNSLookupRealm is true — the same
+// caveat applies as in MIT krb5's dns_lookup_realm option.
+func (cl *Client) lookupRealmDNS(host string) string {
+	if host == "" {
+		return ""
+	}
+	host = strings.TrimSuffix(host, ".")
+	timeout := cl.settings.DNSRealmLookupTimeout()
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	resolver := net.DefaultResolver
+	for h := host; h != ""; {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		txts, err := resolver.LookupTXT(ctx, "_kerberos."+h)
+		cancel()
+		if err == nil {
+			for _, t := range txts {
+				if t = strings.TrimSpace(t); t != "" {
+					return t
+				}
+			}
+		}
+		i := strings.Index(h, ".")
+		if i < 0 {
+			break
+		}
+		h = h[i+1:]
+	}
+	return ""
+}
+

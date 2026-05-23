@@ -29,6 +29,7 @@ type Credentials struct {
 	keytab          *keytab.Keytab
 	nthash          []byte
 	aeskey          []byte
+	aeskeyEtype     int32
 	password        string
 	pfxData         []byte
 	pfxPass         string
@@ -138,8 +139,24 @@ func (c *Credentials) WithNTHash(hash []byte) *Credentials {
 }
 
 // WithAESKey sets the aeskey in the Credentials struct.
+// The etype is inferred from the key length at use time: a 32 byte key is
+// treated as aes256-cts-hmac-sha1-96 and any other length as
+// aes128-cts-hmac-sha1-96. To use the RFC 8009 SHA-2 variants, call
+// WithAESKeyEtype instead.
 func (c *Credentials) WithAESKey(key []byte) *Credentials {
 	c.aeskey = key
+	c.aeskeyEtype = 0
+	c.keytab = keytab.New() // clear any keytab
+	return c
+}
+
+// WithAESKeyEtype sets the aeskey in the Credentials struct along with the
+// etype id the key belongs to. Use this when supplying an aes128-cts-hmac-sha256-128
+// or aes256-cts-hmac-sha384-192 raw key, since those cannot be distinguished
+// from the RFC 3962 (SHA-1) variants by key length alone.
+func (c *Credentials) WithAESKeyEtype(key []byte, eid int32) *Credentials {
+	c.aeskey = key
+	c.aeskeyEtype = eid
 	c.keytab = keytab.New() // clear any keytab
 	return c
 }
@@ -181,6 +198,13 @@ func (c *Credentials) HasAESKey() bool {
 		return true
 	}
 	return false
+}
+
+// AESKeyEtype returns the etype id associated with the credential's AES key,
+// or 0 if the key was set via WithAESKey and the etype should be inferred from
+// the key length at use time.
+func (c *Credentials) AESKeyEtype() int32 {
+	return c.aeskeyEtype
 }
 
 // WithPFX sets the PFX data and password in the Credentials struct for PKINIT authentication.
