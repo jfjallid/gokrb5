@@ -860,8 +860,10 @@ func (cl *Client) SaveAllTicketsToCCache(ccache *credentials.CCache, clientPrinc
 	}
 	entries := cl.cache.getEntries()
 	for _, entry := range entries {
-		if entry.SPN == "krbtgt/"+cl.Credentials.Realm() {
-			// skip
+		// Skip the local-realm TGT; service tickets only are saved here. The
+		// comparison is case-insensitive because entry.SPN preserves the KDC's
+		// canonical form, which may differ in case from cl.Credentials.Realm().
+		if strings.EqualFold(entry.SPN, "krbtgt/"+cl.Credentials.Realm()) {
 			continue
 		}
 		if ccache.Contains(entry.Ticket.SName) {

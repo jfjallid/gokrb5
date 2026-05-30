@@ -51,7 +51,12 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 		return tgsReq, tgsRep, krberror.Errorf(err, krberror.EncodingError, "TGS Exchange Error: TGS_REP is not valid")
 	}
 
-	if tgsRep.Ticket.SName.NameString[0] == "krbtgt" && !tgsRep.Ticket.SName.Equal(tgsReq.ReqBody.SName) {
+	// The krbtgt service name is matched case-insensitively to stay consistent
+	// with the request-side check below (strings.EqualFold) and to tolerate a
+	// KDC that canonicalises the service name's case. The second clause keeps
+	// using Equal: it only fires when both sides are krbtgt, and realm-name
+	// equivalence is handled explicitly by the alias registration that follows.
+	if strings.EqualFold(tgsRep.Ticket.SName.NameString[0], "krbtgt") && !tgsRep.Ticket.SName.Equal(tgsReq.ReqBody.SName) {
 		if referral > 5 {
 			return tgsReq, tgsRep, krberror.Errorf(err, krberror.KRBMsgError, "TGS Exchange Error: maximum number of referrals exceeded")
 		}
@@ -252,4 +257,3 @@ func (cl *Client) lookupRealmDNS(host string) string {
 	}
 	return ""
 }
-
