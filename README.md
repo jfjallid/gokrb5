@@ -1,30 +1,29 @@
 # gokrb5
 
-This repository is a copy of the official gokrb5 repo with a few things removed.
-It does not closely follow the official repo and is only stored here as a dependency for the go-smb library.
+A fork of [jcmturner/gokrb5](https://github.com/jcmturner/gokrb5), maintained primarily as a
+dependency of [go-smb](https://github.com/jfjallid/go-smb) and
+[kerbtool](https://github.com/jfjallid/kerbtool).
 
+This fork does **not** track upstream and does not aim for strict conformance to the Kerberos
+RFCs. Its focus is interoperability with **Active Directory**: where the specification and
+real-world AD behaviour disagree, it favours whatever makes AD work in practice. APIs and
+on-the-wire behaviour are changed as needed to serve its primary clients — go-smb and
+kerbtool — so backwards compatibility with upstream gokrb5 is not a goal.
 
+## Installation
 
-It is recommended to use the latest version: [![Version](https://img.shields.io/github/release/jcmturner/gokrb5.svg)](https://github.com/jfjallid/gokrb5/releases)
+```go
+import "github.com/jfjallid/gokrb5/v9/<sub-package>"
+```
 
-Development will be focused on the latest major version. New features will only be targeted at this version.
-
-| Versions | Dependency Management | Import Path | Usage | Godoc | Go Report Card |
-|----------|-----------------------|-------------|-------|-------|----------------|
-| [![v8](https://github.com/jfjallid/gokrb5/workflows/v8/badge.svg)](https://github.com/jfjallid/gokrb5/actions?query=workflow%3Av8) | Go modules | import "github.com/jfjallid/gokrb5/v8/{sub-package}" | [![Usage](https://img.shields.io/badge/v8-usage-blue)](https://github.com/jfjallid/gokrb5/blob/master/v8/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jfjallid/gokrb5/v8) | [![Go Report Card](https://goreportcard.com/badge/github.com/jfjallid/gokrb5/v8)](https://goreportcard.com/report/github.com/jfjallid/gokrb5/v8) |
-| [![v7](https://github.com/jfjallid/gokrb5/workflows/v7/badge.svg)](https://github.com/jfjallid/gokrb5/actions?query=workflow%3Av7) | gopkg.in | import "gopkg.in/jcmturner/gokrb5.v7/{sub-package}" | [![Usage](https://img.shields.io/badge/v7-usage-blue)](https://github.com/jfjallid/gokrb5/blob/master/USAGE.md) | [![GoDoc](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/jfjallid/gokrb5@v7.5.0+incompatible) | [![Go Report Card](https://goreportcard.com/badge/gopkg.in/jcmturner/gokrb5.v7)](https://goreportcard.com/report/gopkg.in/jcmturner/gokrb5.v7) |
-
+Development targets the latest major version (`v9`) only.
 
 #### Go Version Support
-![Go version](https://img.shields.io/badge/Go-1.18-brightgreen.svg)
-![Go version](https://img.shields.io/badge/Go-1.17-brightgreen.svg)
-![Go version](https://img.shields.io/badge/Go-1.16-brightgreen.svg)
 
-gokrb5 may work with other versions of Go but they are not formally tested.
-It has been reported that gokrb5 also works with the [gollvm](https://go.googlesource.com/gollvm/) compiler but this is not formally tested.
+Requires Go 1.24 or later (see [`go.mod`](v9/go.mod)).
 
 ## Features
-* **Pure Go** - no dependency on external libraries 
+* **Pure Go** - no dependency on external libraries
 * No platform specific code
 * Server Side
   * HTTP handler wrapper implements SPNEGO Kerberos authentication
@@ -49,15 +48,11 @@ It has been reported that gokrb5 also works with the [gollvm](https://go.googles
 | aes256-cts-hmac-sha384-192 | 20 | 20 | 8009 |
 | rc4-hmac | 23 | -138 | 4757 |
 
-
 The following is working/tested:
 * Tested against MIT KDC (1.6.3 is the oldest version tested against) and Microsoft Active Directory (Windows 2008 R2)
 * Tested against a KDC that supports PA-FX-FAST.
 * Tested against users that have pre-authentication required using PA-ENC-TIMESTAMP.
 * Microsoft PAC Authorization Data is processed and exposed in the HTTP request context. Available if Microsoft Active Directory is used as the KDC.
-
-## Contributing
-If you are interested in contributing to gokrb5, great! Please read the [contribution guidelines](https://github.com/jfjallid/gokrb5/blob/master/CONTRIBUTING.md).
 
 ---
 
@@ -85,10 +80,6 @@ If you are interested in contributing to gokrb5, great! Please read the [contrib
 
 ## Thanks
 * Greg Hudson from the MIT Consortium for Kerberos and Internet Trust for providing useful advice.
-
-## Contributing
-Thank you for your interest in contributing to gokrb5 please read the 
-[contribution guide](https://github.com/jfjallid/gokrb5/blob/master/CONTRIBUTING.md) as it should help you get started.
 
 ## Known Issues
 | Issue | Worked around? | References |
