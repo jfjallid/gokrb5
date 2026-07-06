@@ -72,12 +72,16 @@ func (p *PKINITClient) BuildPAPKASReq(reqBodyBytes []byte, nonce int, cusec int,
 		return types.PAData{}, fmt.Errorf("failed to encode DH parameters: %w", err)
 	}
 
+	dhPubKey, err := EncodeDHPublicKey(dhKeyPair.Public)
+	if err != nil {
+		return types.PAData{}, fmt.Errorf("failed to encode DH public key: %w", err)
+	}
 	clientPubKey := SubjectPublicKeyInfo{
 		Algorithm: AlgorithmIdentifier{
 			Algorithm:  OIDDiffieHellman,
 			Parameters: dhParams,
 		},
-		PublicKey: EncodeDHPublicKey(dhKeyPair.Public),
+		PublicKey: dhPubKey,
 	}
 
 	// 7. Build AuthPack
@@ -156,6 +160,14 @@ func (p *PKINITClient) ProcessPAPKASRep(padata types.PAData, etypeID int32) (typ
 	kdcPub, err := DecodeDHPublicKey(kdcKeyInfo.SubjectPublicKey)
 	if err != nil {
 		return types.EncryptionKey{}, fmt.Errorf("failed to decode KDC DH public key: %w", err)
+	}
+
+	// 5a. Validate the KDC's DH public value before using it (reject small-subgroup
+	// / out-of-range elements). Note: this does NOT authenticate the KDC — the
+	// DHSignedData signature is still unverified (audit S1) — but it removes the
+	// invalid-element class of attack that would otherwise compound S1.
+	if err := ValidateDHPublicKey(kdcPub, p.DHKeyPair.P); err != nil {
+		return types.EncryptionKey{}, fmt.Errorf("KDC DH public key rejected: %w", err)
 	}
 
 	// 6. Compute DH shared secret

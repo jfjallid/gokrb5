@@ -61,10 +61,10 @@ type KerbValidationInfo struct {
 	FailedILogonCount      uint32
 	Reserved3              uint32
 	SIDCount               uint32
-	ExtraSIDs              []mstypes.KerbSidAndAttributes `ndr:"pointer,conformant"`
-	ResourceGroupDomainSID mstypes.RPCSID                 `ndr:"pointer"`
+	ExtraSIDs              []mstypes.KerbSidAndAttributes `ndr:"pointer,fullpointer,conformant"`
+	ResourceGroupDomainSID mstypes.RPCSID                 `ndr:"pointer,fullpointer"`
 	ResourceGroupCount     uint32
-	ResourceGroupIDs       []mstypes.GroupMembership `ndr:"pointer,conformant"`
+	ResourceGroupIDs       []mstypes.GroupMembership `ndr:"pointer,fullpointer,conformant"`
 }
 
 // Unmarshal bytes into the DeviceInfo struct

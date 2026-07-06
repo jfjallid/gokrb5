@@ -255,12 +255,30 @@ func (pac *PACType) EncodePACInfoBuffers() (err error) {
 	return nil
 }
 
+// bufferBytes returns a copy of the bytes for the given info buffer after
+// bounds-checking its Offset/CBBufferSize against pac.Data. The offset and
+// size fields are read directly from the (attacker-or-KDC-supplied) PAC, so an
+// unchecked slice would panic on an out-of-range or overflowing range.
+func (pac *PACType) bufferBytes(buf InfoBuffer) ([]byte, error) {
+	// Use uint64 arithmetic to avoid int overflow on 32-bit platforms and to
+	// detect Offset+CBBufferSize wrapping.
+	end := buf.Offset + uint64(buf.CBBufferSize)
+	if end < buf.Offset || buf.Offset > uint64(len(pac.Data)) || end > uint64(len(pac.Data)) {
+		return nil, fmt.Errorf("PAC info buffer out of range: offset %d size %d, data length %d", buf.Offset, buf.CBBufferSize, len(pac.Data))
+	}
+	p := make([]byte, buf.CBBufferSize)
+	copy(p, pac.Data[buf.Offset:end])
+	return p, nil
+}
+
 // ProcessPACInfoBuffers processes the PAC Info Buffers.
 // https://msdn.microsoft.com/en-us/library/cc237954.aspx
 func (pac *PACType) ProcessPACInfoBuffers(key types.EncryptionKey, l *log.Logger, verifyChecksum bool) error {
 	for _, buf := range pac.Buffers {
-		p := make([]byte, buf.CBBufferSize, buf.CBBufferSize)
-		copy(p, pac.Data[int(buf.Offset):int(buf.Offset)+int(buf.CBBufferSize)])
+		p, err := pac.bufferBytes(buf)
+		if err != nil {
+			return err
+		}
 		switch buf.ULType {
 		case infoTypeKerbValidationInfo:
 			if pac.KerbValidationInfo != nil {
@@ -432,10 +450,12 @@ func (pac *PACType) ProcessCredentialsInfo(asReplyKey types.EncryptionKey) error
 			// Must ignore subsequent buffers of this type
 			continue
 		}
-		p := make([]byte, buf.CBBufferSize)
-		copy(p, pac.Data[int(buf.Offset):int(buf.Offset)+int(buf.CBBufferSize)])
+		p, err := pac.bufferBytes(buf)
+		if err != nil {
+			return err
+		}
 		var k CredentialsInfo
-		err := k.Unmarshal(p, asReplyKey)
+		err = k.Unmarshal(p, asReplyKey)
 		if err != nil {
 			return fmt.Errorf("error processing CredentialsInfo: %v", err)
 		}

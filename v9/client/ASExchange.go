@@ -299,12 +299,22 @@ Loop:
 				err = krberror.Errorf(e, krberror.EncodingError, "error unmashalling ETYPE-INFO2 data")
 				return
 			}
+			// EData comes from a KRBError, which is not integrity protected, so an
+			// attacker/MITM can send an empty but well-formed ETYPE-INFO2 SEQUENCE.
+			if len(info) == 0 {
+				err = krberror.NewErrorf(krberror.EncodingError, "ETYPE-INFO2 in KRBError is empty")
+				return
+			}
 			etypeID = info[0].EType
 			break Loop
 		case patype.PA_ETYPE_INFO:
 			info, e := pa.GetETypeInfo()
 			if e != nil {
 				err = krberror.Errorf(e, krberror.EncodingError, "error unmashalling ETYPE-INFO data")
+				return
+			}
+			if len(info) == 0 {
+				err = krberror.NewErrorf(krberror.EncodingError, "ETYPE-INFO in KRBError is empty")
 				return
 			}
 			etypeID = info[0].EType

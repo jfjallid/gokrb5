@@ -308,8 +308,10 @@ func (kt *Keytab) Unmarshal(b []byte) error {
 			ke := newEntry()
 			// p keeps track as to where we are in the byte stream
 			var p int
-			var err error
-			parsePrincipal(eb, &p, kt, &ke, &endian)
+			err := parsePrincipal(eb, &p, kt, &ke, &endian)
+			if err != nil {
+				return err
+			}
 			ke.Timestamp, err = readTimestamp(eb, &p, &endian)
 			if err != nil {
 				return err

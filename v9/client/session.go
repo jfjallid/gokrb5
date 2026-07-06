@@ -59,9 +59,7 @@ func (s *sessions) update(sess *session) {
 			// Cancel the one in the cache and add this one.
 			i.mux.Lock()
 			defer i.mux.Unlock()
-			if i.cancel != nil {
-				i.cancel <- true
-			}
+			i.signalCancel()
 			s.Entries[key] = sess
 			return
 		}
@@ -106,8 +104,8 @@ type jsonSession struct {
 // AddSession adds a session for a realm with a TGT to the client's session cache.
 // A goroutine is started to automatically renew the TGT before expiry.
 func (cl *Client) addSession(tgt messages.Ticket, dep messages.EncKDCRepPart) {
-	if strings.ToLower(tgt.SName.NameString[0]) != "krbtgt" {
-		// Not a TGT
+	if len(tgt.SName.NameString) == 0 || strings.ToLower(tgt.SName.NameString[0]) != "krbtgt" {
+		// Not a TGT (or a malformed ticket with no SName components)
 		return
 	}
 	realm := tgt.SName.NameString[len(tgt.SName.NameString)-1]
@@ -140,13 +138,28 @@ func (s *session) update(tgt messages.Ticket, dep messages.EncKDCRepPart) {
 	s.sessionKeyExpiration = dep.KeyExpiration
 }
 
+// signalCancel performs a non-blocking send on the session's cancel channel to
+// stop its auto-renewal goroutine. A non-blocking send is required because both
+// sessions.update and session.destroy may signal cancel while holding a lock: if
+// the renewal goroutine has already exited (so nothing drains the channel) or a
+// cancel is already buffered, a plain `cancel <- true` would block forever and
+// deadlock under the held lock. The single buffer slot still guarantees at least
+// one signal is delivered to a live goroutine. The caller may hold s.mux.
+func (s *session) signalCancel() {
+	if s.cancel == nil {
+		return
+	}
+	select {
+	case s.cancel <- true:
+	default:
+	}
+}
+
 // destroy will cancel any auto renewal of the session and set the expiration times to the current time
 func (s *session) destroy() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	if s.cancel != nil {
-		s.cancel <- true
-	}
+	s.signalCancel()
 	s.endTime = time.Now().UTC()
 	s.renewTill = s.endTime
 	s.sessionKeyExpiration = s.endTime
@@ -344,6 +357,11 @@ func (cl *Client) spnRealm(spn types.PrincipalName) string {
 }
 
 func (cl *Client) sessionRealms() (realms []string) {
+	// Take the read lock: auto-renewal goroutines call sessions.update which
+	// writes Entries under mux, so an unlocked range here is a data race (and can
+	// panic with "concurrent map iteration and map write").
+	cl.sessions.mux.RLock()
+	defer cl.sessions.mux.RUnlock()
 	realms = make([]string, 0, len(cl.sessions.Entries))
 	for k := range cl.sessions.Entries {
 		realms = append(realms, k)

@@ -78,6 +78,7 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 				continue
 			}
 			salt = string(pa.PADataValue)
+			paID = pa.PADataType
 		case patype.PA_ETYPE_INFO:
 			if paID > pa.PADataType {
 				continue
@@ -87,6 +88,11 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 			if err != nil {
 				return key, et, fmt.Errorf("error unmashaling PA Data to PA-ETYPE-INFO2: %v", err)
 			}
+			// PA data can originate from an unauthenticated KRBError; an empty but
+			// well-formed ETYPE-INFO SEQUENCE must not panic on eti[0].
+			if len(eti) == 0 {
+				continue
+			}
 			if etID != eti[0].EType {
 				et, err = GetEtype(eti[0].EType)
 				if err != nil {
@@ -94,6 +100,7 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 				}
 			}
 			salt = string(eti[0].Salt)
+			paID = pa.PADataType
 		case patype.PA_ETYPE_INFO2:
 			if paID > pa.PADataType {
 				continue
@@ -102,6 +109,9 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 			err := et2.Unmarshal(pa.PADataValue)
 			if err != nil {
 				return key, et, fmt.Errorf("error unmashalling PA Data to PA-ETYPE-INFO2: %v", err)
+			}
+			if len(et2) == 0 {
+				continue
 			}
 			if etID != et2[0].EType {
 				et, err = GetEtype(et2[0].EType)
@@ -113,6 +123,7 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 				sk2p = hex.EncodeToString(et2[0].S2KParams)
 			}
 			salt = et2[0].Salt
+			paID = pa.PADataType
 		}
 	}
 	if salt == "" {
@@ -129,8 +140,14 @@ func GetKeyFromPassword(passwd string, cname types.PrincipalName, realm string, 
 	return key, et, nil
 }
 
-// GetKeyFromHash generates an encryption key from the principal's password hash
-func GetKeyFromHash(hash []byte, cname types.PrincipalName, realm string, etID int32, pas types.PADataSequence) (types.EncryptionKey, etype.EType, error) {
+// GetKeyFromHash builds an encryption key directly from a pre-computed key value
+// (an NT hash for RC4-HMAC, or a raw AES key) for enctype etID.
+//
+// Unlike GetKeyFromPassword, no string-to-key derivation is performed: the hash
+// IS the key, so the cname, realm and pas parameters are NOT used. They are
+// retained only to mirror GetKeyFromPassword's signature so the two are
+// interchangeable at call sites; pass zero values if you have none.
+func GetKeyFromHash(hash []byte, _ types.PrincipalName, _ string, etID int32, _ types.PADataSequence) (types.EncryptionKey, etype.EType, error) {
 	var key types.EncryptionKey
 	et, err := GetEtype(etID)
 	if err != nil {

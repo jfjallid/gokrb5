@@ -85,19 +85,48 @@ func generateDHKeyPairWithParams(p, g, q *big.Int) (*DHKeyPair, error) {
 	}, nil
 }
 
-// ComputeDHSharedSecret computes the DH shared secret: theirPublic^myPrivate mod p
+// ValidateDHPublicKey checks that a peer's DH public value y is a safe element
+// of the group modulo p before it is used in a shared-secret computation.
+//
+// The Oakley groups used here are built on safe primes (p = 2q+1), so the only
+// group elements of small order are 1 (order 1) and p-1 (order 2). Requiring
+// 1 < y < p-1 therefore rejects every small-subgroup / invalid-element value
+// (including the degenerate 0 and 1 that would force a predictable shared
+// secret) while admitting any legitimate peer public value, whose order is q or
+// 2q. Without this check an on-path attacker (see S1) could substitute such a
+// value to leak private-key bits or fix the derived key.
+func ValidateDHPublicKey(y, p *big.Int) error {
+	if y == nil || p == nil {
+		return fmt.Errorf("DH public key validation: nil parameter")
+	}
+	one := big.NewInt(1)
+	if y.Cmp(one) <= 0 {
+		return fmt.Errorf("invalid DH public key: y must be greater than 1")
+	}
+	pMinus1 := new(big.Int).Sub(p, one)
+	if y.Cmp(pMinus1) >= 0 {
+		return fmt.Errorf("invalid DH public key: y must be less than p-1")
+	}
+	return nil
+}
+
+// ComputeDHSharedSecret computes the DH shared secret: theirPublic^myPrivate mod p.
+// Callers MUST validate theirPublic with ValidateDHPublicKey first.
 func ComputeDHSharedSecret(myPrivate, theirPublic, p *big.Int) *big.Int {
 	return new(big.Int).Exp(theirPublic, myPrivate, p)
 }
 
 // EncodeDHPublicKey encodes a DH public key as an ASN.1 INTEGER wrapped in a BIT STRING.
-func EncodeDHPublicKey(pub *big.Int) asn1.BitString {
+func EncodeDHPublicKey(pub *big.Int) (asn1.BitString, error) {
 	// The public key is encoded as a DER INTEGER inside a BIT STRING
-	pubBytes, _ := asn1.Marshal(pub)
+	pubBytes, err := asn1.Marshal(pub)
+	if err != nil {
+		return asn1.BitString{}, fmt.Errorf("failed to marshal DH public key: %w", err)
+	}
 	return asn1.BitString{
 		Bytes:     pubBytes,
 		BitLength: len(pubBytes) * 8,
-	}
+	}, nil
 }
 
 // DecodeDHPublicKey decodes a DH public key from a BIT STRING containing an ASN.1 INTEGER.

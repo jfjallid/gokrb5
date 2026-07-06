@@ -14,6 +14,14 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// maxKerberosMsgSize bounds the size of a reply we are willing to allocate from
+// a KDC's TCP length prefix. The 4-byte length header (RFC 4120 7.2.2) is
+// unauthenticated and can be set by an on-path attacker, so an unbounded
+// make([]byte, s) is a trivial memory-exhaustion DoS. Real Kerberos messages
+// (even with a large PAC) sit comfortably under 1 MiB; this cap is generous
+// while still preventing the attack.
+const maxKerberosMsgSize = 1 << 20 // 1 MiB
+
 // sendToKDC sends b to the KDC for realm and returns the raw reply bytes.
 //
 // Transport selection follows udp_preference_limit, but the retry logic is
@@ -212,11 +220,14 @@ func sendTCP(conn net.Conn, b []byte) ([]byte, error) {
 	}
 
 	sh := make([]byte, 4, 4)
-	_, err = conn.Read(sh)
+	_, err = io.ReadFull(conn, sh)
 	if err != nil {
 		return r, fmt.Errorf("error reading response size header: %v", err)
 	}
 	s := binary.BigEndian.Uint32(sh)
+	if s > maxKerberosMsgSize {
+		return r, fmt.Errorf("KDC %s response size %d exceeds maximum allowed %d", conn.RemoteAddr().String(), s, maxKerberosMsgSize)
+	}
 
 	rb := make([]byte, s, s)
 	_, err = io.ReadFull(conn, rb)

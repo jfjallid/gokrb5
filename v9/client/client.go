@@ -323,7 +323,10 @@ func NewFromCCacheWithFallbacks(c *credentials.CCache, targets [][]string, krb5c
 	}
 	// Load all referral tickets (krbtgt for foreign realms) as sessions
 	for _, cred := range c.GetEntries() {
-		if strings.EqualFold(cred.Server.PrincipalName.NameString[0], "krbtgt") && !strings.EqualFold(cred.Server.Realm, c.DefaultPrincipal.Realm) {
+		// A krbtgt referral entry is "krbtgt/REALM" (2 components). Require at least
+		// two before indexing [0]/[1]: a CCache is file input and may carry a
+		// principal with too few name components.
+		if len(cred.Server.PrincipalName.NameString) >= 2 && strings.EqualFold(cred.Server.PrincipalName.NameString[0], "krbtgt") && !strings.EqualFold(cred.Server.Realm, c.DefaultPrincipal.Realm) {
 			foundOtherReferralTicket = true
 			var tgt messages.Ticket
 			err = tgt.Unmarshal(cred.Ticket)

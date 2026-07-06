@@ -84,7 +84,9 @@ func (a *APReq) DecryptAuthenticator(sessionKey types.EncryptionKey) error {
 }
 
 func authenticatorKeyUsage(pn types.PrincipalName) int {
-	if pn.NameString[0] == "krbtgt" {
+	// The ticket SName comes from an attacker-supplied AP-REQ on the verify path,
+	// so it may have no name components; guard before indexing [0].
+	if len(pn.NameString) > 0 && pn.NameString[0] == "krbtgt" {
 		return keyusage.TGS_REQ_PA_TGS_REQ_AP_REQ_AUTHENTICATOR
 	}
 	return keyusage.AP_REQ_AUTHENTICATOR
@@ -195,5 +197,13 @@ func (a *APReq) Verify(kt *keytab.Keytab, d time.Duration, cAddr types.HostAddre
 	if t.Sub(ct) > d || ct.Sub(t) > d {
 		return false, NewKRBError(a.Ticket.SName, a.Ticket.Realm, errorcode.KRB_AP_ERR_SKEW, fmt.Sprintf("clock skew with client too large. greater than %v seconds", d))
 	}
+
+	// Replay detection (RFC 4120 3.2.3): reject an authenticator already seen
+	// within the clock-skew window. Keyed on the actual ticket service name so a
+	// snameOverride used only for key selection does not weaken the check.
+	if getDefaultReplayCache().IsReplay(a.Ticket.SName, a.Authenticator, d) {
+		return false, NewKRBError(a.Ticket.SName, a.Ticket.Realm, errorcode.KRB_AP_ERR_REPEAT, "authenticator has already been seen within the clock skew window (replay)")
+	}
+
 	return true, nil
 }

@@ -56,7 +56,9 @@ func (cl *Client) TGSExchange(tgsReq messages.TGSReq, kdcRealm string, tgt messa
 	// KDC that canonicalises the service name's case. The second clause keeps
 	// using Equal: it only fires when both sides are krbtgt, and realm-name
 	// equivalence is handled explicitly by the alias registration that follows.
-	if strings.EqualFold(tgsRep.Ticket.SName.NameString[0], "krbtgt") && !tgsRep.Ticket.SName.Equal(tgsReq.ReqBody.SName) {
+	// SName is cleartext in the reply, so a malformed/tampered TGS_REP could carry
+	// an empty NameString; guard the index before the krbtgt referral check.
+	if len(tgsRep.Ticket.SName.NameString) > 0 && strings.EqualFold(tgsRep.Ticket.SName.NameString[0], "krbtgt") && !tgsRep.Ticket.SName.Equal(tgsReq.ReqBody.SName) {
 		if referral > 5 {
 			return tgsReq, tgsRep, krberror.Errorf(err, krberror.KRBMsgError, "TGS Exchange Error: maximum number of referrals exceeded")
 		}
